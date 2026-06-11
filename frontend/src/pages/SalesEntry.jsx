@@ -1,29 +1,23 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  FileText, User, ShoppingBag, Package, Trash2, 
-  Search, PlusCircle, CreditCard, Save, AlertTriangle, Info 
-} from 'lucide-react';
+import { FileText, User, ShoppingBag, Package, Trash2, Search, CreditCard, Save, AlertTriangle, Info } from 'lucide-react';
 import api from '../services/api';
+import { T, Card, Field, Input, Select, GoldBtn, THead } from './ui';
 
 export default function SalesEntry() {
-  // --- STATE UTAMA ---
   const [availableStocks, setAvailableStocks] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   
-  // State untuk Invoice Header
   const [header, setHeader] = useState({
-    no_invoice: '', // Bisa diisi manual atau auto-generate
+    no_invoice: '',
     sumber_penjualan: 'Offline / Toko Fisik',
     nama_pembeli: '',
     no_order_marketplace: '',
     metode_pembayaran: 'Cash'
   });
 
-  // State untuk Detail Items (Keranjang/Items Terjual)
   const [itemsToSell, setItemsToSell] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Ambil Data Barang Siap Jual untuk Dropdown
   const fetchAvailableStocks = async () => {
     try {
       const res = await api.get('/inventory/available');
@@ -35,24 +29,16 @@ export default function SalesEntry() {
 
   useEffect(() => { fetchAvailableStocks(); }, []);
 
-  // --- LOGIKA FORMULIR DETAIL (MENAMBAH BARANG TERJUAL) ---
   const handleAddItemFromSearch = (idStockToAdd) => {
     if (!idStockToAdd) return;
-    
-    // Cari barang lengkap dari daftar master
     const stockItem = availableStocks.find(s => s.id_stock === idStockToAdd);
-    
     if (!stockItem) return;
-    // Hindari duplikasi barang fisik yang sama
     if (itemsToSell.some(i => i.id_stock === idStockToAdd)) return alert("Barang ini sudah ada di daftar.");
 
-    // Tambahkan ke daftar jual dengan default harga jual modal+10% (Contoh saja)
     setItemsToSell([...itemsToSell, { 
       ...stockItem, 
       harga_jual_aktual: Math.round(Number(stockItem.total_modal) * 1.1) 
     }]);
-    
-    // Bersihkan search bar
     setSearchQuery('');
   };
 
@@ -66,26 +52,19 @@ export default function SalesEntry() {
     ));
   };
 
-  // --- LOGIKA KALKULASI TOTAL ---
   const totalModal_InternalView = itemsToSell.reduce((sum, i) => sum + Number(i.total_modal), 0);
   const totalPenjualan = itemsToSell.reduce((sum, i) => sum + i.harga_jual_aktual, 0);
   const totalItem = itemsToSell.length;
   const estimasiLaba = totalPenjualan - totalModal_InternalView;
 
-  // --- LOGIKA SIMPAN & EXEKUSI PENJUALAN ---
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
     if (totalItem === 0) return alert("Pilih minimal satu barang yang terjual!");
-    
-    // Validasi No Invoice jika diisi manual
     if (!header.no_invoice && header.sumber_penjualan !== 'Offline / Toko Fisik') {
         return alert("Pencatatan Marketplace wajib mengisi No. Invoice/Order dari Marketplace!");
     }
 
     setIsSubmitting(true);
-
-    // Generate No Invoice Auto jika kosong (untuk offline)
     const finalNoInvoice = header.no_invoice || `GS-TRAD-${Date.now().toString().slice(-6)}`;
 
     const payload = {
@@ -104,7 +83,6 @@ export default function SalesEntry() {
       await api.post('/sales', payload);
       alert(`Pencatatan Penjualan ${finalNoInvoice} Berhasil Disimpan. Stok Sudah Dikurangi.`);
       
-      // Reset Form Total
       setHeader({ no_invoice: '', sumber_penjualan: 'Offline / Toko Fisik', nama_pembeli: '', no_order_marketplace: '', metode_pembayaran: 'Cash' });
       setItemsToSell([]);
       fetchAvailableStocks(); 
@@ -116,151 +94,141 @@ export default function SalesEntry() {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6 max-w-7xl mx-auto pb-10">
+    <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 20, maxWidth: 1200, margin: '0 auto', paddingBottom: 40 }}>
       
-      {/* HEADER SECTION (GAYA FORMULIR LINIER) */}
-      <div className="bg-zinc-900 border border-zinc-800 rounded-2xl shadow-lg overflow-hidden">
-        <div className="p-5 border-b border-zinc-800 bg-zinc-950/50 flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            <div className="p-2.5 bg-orange-600 rounded-xl text-white"><FileText className="w-5 h-5"/></div>
+      {/* HEADER SECTION */}
+      <Card>
+        <div style={{ padding: '16px 22px', borderBottom: `1px solid ${T.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: T.overlay }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ background: T.gold, padding: 8, borderRadius: 8, display: 'flex' }}>
+              <FileText size={20} color="#000" />
+            </div>
             <div>
-              <h2 className="text-xl font-bold text-zinc-100">Formulir Pencatatan Penjualan</h2>
-              <p className="text-xs text-zinc-500 mt-0.5">Catat histori barang terjual untuk sinkronisasi modal & laba secara administratif.</p>
+              <h2 style={{ fontSize: '1.1rem', color: T.textPri, fontWeight: 600 }}>Formulir Pencatatan Penjualan</h2>
+              <p style={{ fontSize: '0.75rem', color: T.textMut, marginTop: 2 }}>Catat histori barang terjual untuk sinkronisasi modal & laba secara administratif.</p>
             </div>
           </div>
-          <button type="submit" disabled={isSubmitting} className="bg-orange-600 hover:bg-orange-500 disabled:opacity-50 text-white px-6 py-2.5 rounded-lg text-sm font-bold shadow-lg flex items-center transition-all">
-            <Save className="w-4 h-4 mr-2" />
-            {isSubmitting ? 'Menyimpan...' : 'Sahkan & Kurangi Stok'}
-          </button>
+          <GoldBtn type="submit" disabled={isSubmitting} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 20px' }}>
+            <Save size={16} /> {isSubmitting ? 'Menyimpan...' : 'Sahkan & Kurangi Stok'}
+          </GoldBtn>
         </div>
 
-        <div className="p-6 bg-zinc-900 grid grid-cols-1 md:grid-cols-12 gap-5">
-          {/* Baris 1 */}
-          <div className="md:col-span-4">
-            <label className="text-xs font-bold text-zinc-400 mb-1.5 block tracking-wide">SUMBER PENJUALAN / JALUR ORDER</label>
-            <div className="relative">
-              <ShoppingBag className="absolute left-3 top-2.5 w-4 h-4 text-zinc-500"/>
-              <select value={header.sumber_penjualan} onChange={(e) => setHeader({...header, sumber_penjualan: e.target.value})} className="w-full bg-zinc-950 border border-zinc-800 text-zinc-200 pl-10 pr-3 py-2 rounded-lg text-sm focus:border-orange-500 focus:outline-none appearance-none">
+        <div style={{ padding: 22, display: 'flex', flexDirection: 'column', gap: 20 }}>
+          {/* Baris 1: Informasi Order */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: 16 }}>
+            <Field label="SUMBER PENJUALAN / JALUR ORDER">
+              <Select value={header.sumber_penjualan} onChange={(e) => setHeader({...header, sumber_penjualan: e.target.value})}>
                 <option value="Offline / Toko Fisik">Offline / Toko Fisik</option>
                 <option value="Shopee">Marketplace: Shopee</option>
                 <option value="Tokopedia">Marketplace: Tokopedia</option>
                 <option value="TikTok Shop">Marketplace: TikTok Shop</option>
-              </select>
-            </div>
-          </div>
-          
-          <div className="md:col-span-4">
-            <label className="text-xs font-bold text-zinc-400 mb-1.5 block tracking-wide">NO. INVOICE / ORDER MARKETPLACE</label>
-            <input type="text" placeholder="Masukkan Kode Nota (Manual/ Marketplace)" value={header.no_invoice} onChange={(e) => setHeader({...header, no_invoice: e.target.value})} className="w-full bg-zinc-950 border border-zinc-800 text-zinc-200 font-mono px-3 py-2 rounded-lg text-sm focus:border-orange-500 focus:outline-none placeholder-zinc-700"/>
-            <p className="text-[10px] text-zinc-600 mt-1">Kosongkan jika ingin auto-generate (Khusus Offline).</p>
-          </div>
-
-          <div className="md:col-span-4">
-            <label className="text-xs font-bold text-zinc-400 mb-1.5 block tracking-wide">METODE PEMBAYARAN TERIMA</label>
-            <div className="relative">
-              <CreditCard className="absolute left-3 top-2.5 w-4 h-4 text-zinc-500"/>
-              <select value={header.metode_pembayaran} onChange={(e) => setHeader({...header, metode_pembayaran: e.target.value})} className="w-full bg-zinc-950 border border-zinc-800 text-zinc-200 pl-10 pr-3 py-2 rounded-lg text-sm focus:border-orange-500 focus:outline-none appearance-none">
+              </Select>
+            </Field>
+            <Field label="NO. INVOICE / ORDER MARKETPLACE">
+              <Input 
+                value={header.no_invoice} 
+                onChange={(e) => setHeader({...header, no_invoice: e.target.value})} 
+                placeholder="Kosongkan jika auto-generate" 
+                style={{ fontFamily: 'JetBrains Mono, monospace' }}
+              />
+            </Field>
+            <Field label="METODE PEMBAYARAN TERIMA">
+              <Select value={header.metode_pembayaran} onChange={(e) => setHeader({...header, metode_pembayaran: e.target.value})}>
                 <option value="Cash">Tunai / Cash</option>
                 <option value="Transfer Bank">Transfer Bank</option>
                 <option value="Saldo Marketplace">Saldo Marketplace (Escrow)</option>
-              </select>
-            </div>
+              </Select>
+            </Field>
           </div>
 
-          {/* Baris 2 (Kondisional Sesuai Request Anda) */}
-          <div className="md:col-span-12 border-t border-zinc-800 pt-5 mt-2 space-y-4">
-            <h4 className="text-[11px] text-orange-500 font-bold uppercase tracking-wider flex items-center"><User className="w-3.5 h-3.5 mr-1.5"/> Identitas Pembeli</h4>
-            <div className="grid grid-cols-2 gap-5">
-              <div>
-                <label className="text-xs font-bold text-zinc-400 mb-1 block">NAMA PEMBELI (TRADISIONAL / OFFLINE)</label>
-                <input type="text" placeholder="Isi untuk transaksi di Toko Fisik..." value={header.nama_pembeli} onChange={(e) => setHeader({...header, nama_pembeli: e.target.value})} className="w-full bg-zinc-950 border border-zinc-800 text-zinc-200 px-3 py-2 rounded-lg text-sm focus:border-orange-500 focus:outline-none placeholder-zinc-700"/>
-              </div>
-              <div>
-                <label className="text-xs font-bold text-zinc-400 mb-1 block">NO. ORDER MARKETPLACE (KHUSUS ONLINE)</label>
-                <input type="text" placeholder="Isi No. Order / Resi Marketplace..." value={header.no_order_marketplace} onChange={(e) => setHeader({...header, no_order_marketplace: e.target.value})} className="w-full bg-zinc-950 border border-zinc-800 text-zinc-200 font-mono px-3 py-2 rounded-lg text-sm focus:border-orange-500 focus:outline-none placeholder-zinc-700"/>
-              </div>
+          {/* Baris 2: Identitas Pembeli */}
+          <div style={{ paddingTop: 16, borderTop: `1px solid ${T.border}` }}>
+            <h4 style={{ fontSize: '0.7rem', color: T.gold, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <User size={14} /> Identitas Pembeli
+            </h4>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+              <Field label="NAMA PEMBELI (TRADISIONAL / OFFLINE)">
+                <Input value={header.nama_pembeli} onChange={(e) => setHeader({...header, nama_pembeli: e.target.value})} placeholder="Isi untuk transaksi di Toko Fisik..." />
+              </Field>
+              <Field label="NO. ORDER MARKETPLACE (KHUSUS ONLINE)">
+                <Input value={header.no_order_marketplace} onChange={(e) => setHeader({...header, no_order_marketplace: e.target.value})} placeholder="Isi No. Order / Resi Marketplace..." style={{ fontFamily: 'JetBrains Mono, monospace' }} />
+              </Field>
             </div>
           </div>
         </div>
-      </div>
+      </Card>
 
-      {/* DETAIL ITEMS SECTION (LINIER - GAYA ERP) */}
-      <div className="bg-zinc-900 border border-zinc-800 rounded-2xl shadow-lg overflow-hidden">
-        <div className="p-5 border-b border-zinc-800 bg-zinc-950/50 flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            <div className="p-2.5 bg-emerald-600 rounded-xl text-white"><Package className="w-5 h-5"/></div>
+      {/* DETAIL ITEMS SECTION */}
+      <Card>
+        <div style={{ padding: '16px 22px', borderBottom: `1px solid ${T.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: T.overlay }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ background: T.jade, padding: 8, borderRadius: 8, display: 'flex' }}>
+              <Package size={20} color="#000" />
+            </div>
             <div>
-              <h2 className="text-xl font-bold text-zinc-100">Daftar Barang Fisik Terjual</h2>
-              <p className="text-xs text-zinc-500 mt-0.5">Pilih barang spesifik dari gudang yang fisiknya sudah keluar.</p>
+              <h2 style={{ fontSize: '1.1rem', color: T.textPri, fontWeight: 600 }}>Daftar Barang Fisik Terjual</h2>
+              <p style={{ fontSize: '0.75rem', color: T.textMut, marginTop: 2 }}>Pilih barang spesifik dari gudang yang fisiknya sudah keluar.</p>
             </div>
           </div>
-          <span className="bg-zinc-800 text-emerald-400 font-mono text-xl font-black px-4 py-1.5 rounded-lg border border-emerald-900/40">
+          <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '1.1rem', fontWeight: 600, color: T.jade, border: `1px solid ${T.jade}40`, background: `${T.jade}15`, padding: '6px 16px', borderRadius: 6 }}>
             {totalItem} Pcs
           </span>
         </div>
 
-        <div className="p-6 space-y-6">
-          {/* Search/ Select Barang dari Stok */}
-          <div className="bg-zinc-950 p-4 rounded-xl border border-zinc-800 relative space-y-2">
-            <label className="text-[10px] font-black text-orange-500 uppercase tracking-widest flex items-center"><Search className="w-3.5 h-3.5 mr-1.5"/> Pilih Barang Siap Jual (Gudang)</label>
-            <select 
-              value={searchQuery}
-              onChange={(e) => handleAddItemFromSearch(e.target.value)}
-              className="w-full bg-zinc-900 border border-zinc-700 text-emerald-300 px-3 py-2.5 rounded text-xs focus:border-orange-500 focus:outline-none"
-            >
-              <option value="">-- Ketik / Pilih Kode STK- (Hanya Menampilkan Stok Tersedia) --</option>
-              {availableStocks.map(stock => (
-                <option key={stock.id_stock} value={stock.id_stock}>
-                  [{stock.id_stock}] {stock.nama_barang} (Mod: {(Number(stock.total_modal)/1000).toLocaleString('id-ID')}K)
-                </option>
-              ))}
-            </select>
+        <div style={{ padding: 22, display: 'flex', flexDirection: 'column', gap: 20 }}>
+          {/* Pilih Barang */}
+          <div style={{ background: T.raised, padding: 16, borderRadius: 6, border: `1px solid ${T.border2}` }}>
+            <Field label="Pilih Barang Siap Jual (Gudang)" gold>
+              <Select value={searchQuery} onChange={(e) => handleAddItemFromSearch(e.target.value)}>
+                <option value="">-- Ketik / Pilih Kode STK- (Hanya Menampilkan Stok Tersedia) --</option>
+                {availableStocks.map(stock => (
+                  <option key={stock.id_stock} value={stock.id_stock}>
+                    [{stock.id_stock}] {stock.nama_barang} (Modal: {(Number(stock.total_modal)/1000).toLocaleString('id-ID')}K)
+                  </option>
+                ))}
+              </Select>
+            </Field>
           </div>
 
-          {/* Tabel Daftar Barang di Jual */}
-          <div className="border border-zinc-800 rounded-lg overflow-hidden">
-            <table className="w-full text-left text-sm text-zinc-300">
-              <thead className="bg-zinc-950 text-zinc-400 uppercase text-[10px] tracking-wider border-b border-zinc-800">
-                <tr>
-                  <th className="p-4 w-12">No</th>
-                  <th className="p-4 w-40">Kode STK</th>
-                  <th className="p-4">Nama / Grade</th>
-                  <th className="p-4 w-56 text-orange-500">Harga Jual Laporan (Edit)</th>
-                  <th className="p-4 w-20 text-center">Aksi</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-zinc-800/60 bg-zinc-900/30">
+          {/* Tabel Keranjang */}
+          <div style={{ overflowX: 'auto', border: `1px solid ${T.border2}`, borderRadius: 6 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <THead cols={['No', 'Kode STK', 'Nama / Grade', 'Harga Jual Laporan (Edit)', { label: 'Aksi', align: 'center' }]} />
+              <tbody>
                 {itemsToSell.length === 0 ? (
                   <tr>
-                    <td colSpan="5" className="p-8 text-center text-zinc-600 text-xs italic">Belum ada barang dipilih. Gunakan select-box di atas.</td>
+                    <td colSpan={5} style={{ padding: 32, textAlign: 'center', color: T.textMut, fontSize: '0.8rem', fontStyle: 'italic' }}>
+                      Belum ada barang dipilih. Gunakan dropdown di atas.
+                    </td>
                   </tr>
                 ) : (
                   itemsToSell.map((item, index) => (
-                    <tr key={item.id_stock} className="hover:bg-zinc-800/30 transition-colors">
-                      <td className="p-4 font-mono font-bold text-zinc-600">{index + 1}</td>
-                      <td className="p-4 font-mono text-xs text-orange-400">{item.id_stock}</td>
-                      <td className="p-4">
-                        <div className="font-bold text-zinc-100 text-sm">{item.nama_barang}</div>
-                        <div className="flex items-center gap-1.5 mt-1 text-[10px] text-zinc-500 font-medium">
-                          <span className="bg-zinc-950 text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-950 uppercase">{item.grade}</span> 
-                          • Modal: Rp {Number(item.total_modal).toLocaleString('id-ID')}
-                          • <AlertTriangle className="w-3 h-3 text-orange-500/50"/> {item.jenis_cacat || 'Normal'}
+                    <tr key={item.id_stock} style={{ borderBottom: `1px solid ${T.border}`, background: T.overlay }}>
+                      <td style={{ padding: '12px 16px', fontFamily: 'JetBrains Mono, monospace', color: T.textSec, fontWeight: 600 }}>{index + 1}</td>
+                      <td style={{ padding: '12px 16px', fontFamily: 'JetBrains Mono, monospace', color: T.gold, fontSize: '0.8rem' }}>{item.id_stock}</td>
+                      <td style={{ padding: '12px 16px' }}>
+                        <div style={{ fontWeight: 600, color: T.textPri, fontSize: '0.9rem' }}>{item.nama_barang}</div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4, fontSize: '0.7rem', color: T.textMut }}>
+                          <span style={{ color: T.jade, background: `${T.jade}20`, padding: '2px 6px', borderRadius: 3, fontWeight: 600 }}>{item.grade}</span>
+                          <span>• Modal: Rp {Number(item.total_modal).toLocaleString('id-ID')}</span>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><AlertTriangle size={10} color={T.gold} /> {item.jenis_cacat || 'Normal'}</span>
                         </div>
                       </td>
-                      <td className="p-4">
-                        <div className="relative">
-                          <span className="absolute left-2.5 top-2.5 text-zinc-600 text-xs font-medium">Rp</span>
-                          <input 
-                            type="number" 
-                            value={item.harga_jual_aktual}
-                            onChange={(e) => updateCartPrice(item.id_stock, e.target.value)}
-                            className="w-full bg-zinc-950 border border-orange-900/50 text-orange-300 font-bold font-mono pl-8 pr-3 py-2.5 rounded-lg text-sm focus:border-orange-500 focus:outline-none"
-                            placeholder="Harga jual deal..."
-                          />
-                        </div>
+                      <td style={{ padding: '12px 16px' }}>
+                        <Input 
+                          type="number" 
+                          value={item.harga_jual_aktual}
+                          onChange={(e) => updateCartPrice(item.id_stock, e.target.value)}
+                          style={{ fontFamily: 'JetBrains Mono, monospace', color: T.gold, fontWeight: 600, width: '100%', maxWidth: 200 }}
+                          placeholder="Harga jual..."
+                        />
                       </td>
-                      <td className="p-4 text-center">
-                        <button type="button" onClick={() => removeItem(item.id_stock)} className="text-zinc-600 hover:text-red-500 p-2 hover:bg-red-950 rounded-lg"><Trash2 className="w-4 h-4"/></button>
+                      <td style={{ padding: '12px 16px', textAlign: 'center' }}>
+                        <button type="button" onClick={() => removeItem(item.id_stock)} style={{ background: 'none', border: 'none', color: T.textMut, cursor: 'pointer', padding: 8, transition: 'color 0.15s' }}
+                          onMouseEnter={e => e.currentTarget.style.color = T.ember}
+                          onMouseLeave={e => e.currentTarget.style.color = T.textMut}>
+                          <Trash2 size={16} />
+                        </button>
                       </td>
                     </tr>
                   ))
@@ -269,33 +237,44 @@ export default function SalesEntry() {
             </table>
           </div>
         </div>
-      </div>
+      </Card>
 
-      {/* SUMMARY TOTAL SEJAJAR (RAPI & PREMANEN) */}
-      <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-start">
-        <div className="md:col-span-8 bg-zinc-900 border border-zinc-800 p-5 rounded-2xl flex items-center space-x-3.5 text-zinc-400 text-xs italic">
-          <Info className="w-10 h-10 text-orange-600/50 shrink-0"/>
-          <p>
-            Pencatatan ini akan mengubah status barang di gudang menjadi <strong className="text-red-400">'Terjual'</strong> dan secara otomatis me-rekonsiliasi keuangan berdasarkan <strong className="text-emerald-400">Total Modal (Gudang)</strong> dibanding <strong className="text-orange-400">Harga Jual (Formulir)</strong> untuk laporan Laba-Rugi.
+      {/* SUMMARY TOTAL SEJAJAR */}
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 20 }}>
+        
+        {/* Info Box */}
+        <Card style={{ background: T.raised, border: `1px solid ${T.border2}`, display: 'flex', alignItems: 'flex-start', padding: 22, gap: 16 }}>
+          <Info size={32} color={T.gold} style={{ opacity: 0.8, flexShrink: 0 }} />
+          <p style={{ color: T.textSec, fontSize: '0.85rem', lineHeight: 1.6 }}>
+            Pencatatan ini akan mengubah status barang di gudang menjadi <strong style={{ color: T.ember }}>'Terjual'</strong> dan secara otomatis me-rekonsiliasi keuangan berdasarkan <strong style={{ color: T.jade }}>Total Modal (Cost)</strong> dibanding <strong style={{ color: T.gold }}>Harga Jual Laporan (Rev)</strong> untuk laporan Laba-Rugi.
           </p>
-        </div>
+        </Card>
 
-        <div className="md:col-span-4 bg-zinc-950 border border-orange-950/40 p-6 rounded-2xl shadow-xl space-y-4 shadow-orange-950/10">
-          <div className="flex justify-between items-end border-b border-zinc-800 pb-3">
-            <p className="text-zinc-500 text-xs font-bold uppercase tracking-wide">Total Modal Aset (Cost)</p>
-            <p className="text-base font-mono font-medium text-zinc-400">Rp {totalModal_InternalView.toLocaleString('id-ID')}</p>
+        {/* Kalkulator Box */}
+        <Card>
+          <div style={{ padding: 22, display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', borderBottom: `1px solid ${T.border}`, paddingBottom: 12 }}>
+              <p style={{ fontSize: '0.65rem', color: T.textMut, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Total Modal Aset (Cost)</p>
+              <p style={{ fontFamily: 'JetBrains Mono, monospace', color: T.textSec, fontSize: '1rem' }}>Rp {totalModal_InternalView.toLocaleString('id-ID')}</p>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', borderBottom: `1px solid ${T.border}`, paddingBottom: 12 }}>
+              <p style={{ fontSize: '0.65rem', color: T.textMut, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Total Penjualan (Rev)</p>
+              <p style={{ fontFamily: 'JetBrains Mono, monospace', color: T.jade, fontSize: '1.25rem', fontWeight: 600 }}>Rp {totalPenjualan.toLocaleString('id-ID')}</p>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+              <p style={{ fontSize: '0.65rem', color: T.gold, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Estimasi Keuntungan</p>
+              <p style={{ 
+                fontFamily: 'JetBrains Mono, monospace', fontSize: '1.1rem', fontWeight: 600, 
+                color: estimasiLaba >= 0 ? T.jade : T.ember, 
+                background: estimasiLaba >= 0 ? `${T.jade}15` : `${T.ember}15`, 
+                padding: '4px 10px', borderRadius: 4 
+              }}>
+                Rp {estimasiLaba.toLocaleString('id-ID')}
+              </p>
+            </div>
           </div>
-          <div className="flex justify-between items-end border-b border-zinc-800 pb-3">
-            <p className="text-zinc-500 text-xs font-bold uppercase tracking-wide">Total Nilai Penjualan (Rev)</p>
-            <p className="text-2xl font-mono font-bold text-emerald-400">Rp {totalPenjualan.toLocaleString('id-ID')}</p>
-          </div>
-          <div className="flex justify-between items-end">
-            <p className="text-orange-500 text-xs font-bold uppercase tracking-wide">Estimasi Keuntungan Bersih</p>
-            <p className={`text-sm font-mono font-black px-2 py-1 rounded ${estimasiLaba >= 0 ? 'bg-emerald-950 text-emerald-300' : 'bg-red-950 text-red-300'}`}>
-              Rp {estimasiLaba.toLocaleString('id-ID')}
-            </p>
-          </div>
-        </div>
+        </Card>
+
       </div>
 
     </form>

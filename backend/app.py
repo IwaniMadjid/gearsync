@@ -1,9 +1,10 @@
 import os
 import json
+import time
+import random
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
-from flask import request, jsonify
 from datetime import datetime
 
 from database import Database
@@ -20,59 +21,225 @@ inventory_service = InventoryService(db)
 if not os.path.exists(os.path.join('static', 'uploads')):
     os.makedirs(os.path.join('static', 'uploads'))
 
-# --- PINTU GET: Untuk Mengambil Data Kedatangan Barang ---
+# ==========================================
+# ENDPOINT PENGADAAN (PURCHASING)
+# ==========================================
+
+@app.route('/api/purchases', methods=['GET'])
+def get_purchases():
+    db = Database()
+    try:
+        # Ambil semua data faktur (Terbaru di atas)
+        query = "SELECT * FROM purchases ORDER BY tgl_pembelian DESC"
+        data = db.fetch_all(query)
+        return jsonify({"status": "success", "data": data}), 200
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/purchases', methods=['POST'])
+def create_purchase():
+    db = Database()
+    req = request.form
+    
+    no_faktur = req.get('no_faktur')
+    tgl_pembelian = req.get('tgl_pembelian')
+    supplier = req.get('supplier')
+    total_nominal = req.get('total_nominal')
+    status_bayar = req.get('status_bayar', 'Tempo')
+    items_str = req.get('items', '[]')
+    
+    # Simpan file bukti bayar jika ada
+    bukti_bayar_path = ''
+    if 'bukti_bayar' in request.files:
+        file = request.files['bukti_bayar']
+        if file.filename != '':
+            filename = secure_filename(f"bukti_{int(time.time())}_{file.filename}")
+            filepath = os.path.join('static', 'uploads', filename)
+            file.save(filepath)
+            bukti_bayar_path = f'/static/uploads/{filename}'
+    
+    try:
+        query = """
+            INSERT INTO purchases 
+            (no_faktur, tgl_pembelian, supplier, total_nominal, status_bayar, bukti_bayar, items, status_kedatangan)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, 'Pending')
+        """
+        db.execute_query(query, (no_faktur, tgl_pembelian, supplier, total_nominal, status_bayar, bukti_bayar_path, items_str))
+        
+        return jsonify({"status": "success", "message": "Faktur berhasil dicatat!"}), 201
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# ==========================================
+# ENDPOINT KEDATANGAN BARANG (SUPPLIES)
+# ==========================================
+
+# 1. Route GET: Untuk menampilkan daftar riwayat barang yang sudah tiba di halaman depan
 @app.route('/api/supplies', methods=['GET'])
-def get_supplies():
+def get_all_supplies():
+    db = Database()
     try:
-        supplies = inventory_service.get_all_supplies()
-        return jsonify({"status": "success", "data": supplies}), 200
+        query = "SELECT * FROM supplies ORDER BY tgl_masuk DESC"
+        data = db.fetch_all(query)
+        return jsonify({"status": "success", "data": data}), 200
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-# --- PINTU POST: Untuk Menyimpan Barang Baru (beserta Foto) ---
-@app.route('/api/supplies', methods=['POST'])
-def add_supply():
+# 2. Route POST: Untuk mengeksekusi/menyimpan barang fisik yang baru dibongkar dari kardus
+@app.route('/api/supplies/execute', methods=['POST'])
+def execute_supplies_arrival():
+    db = Database()
+    req = request.form
+    
+    no_faktur = req.get('no_faktur')
+    tgl_masuk = req.get('tgl_masuk')
+    komponen_str = req.get('komponen', '[]')
+    komponen = json.loads(komponen_str)
+
     try:
-        req = request.form
-        foto_path = ''
+        db.execute_query("START TRANSACTION;")
         
-        # Simpan file gambar jika diunggah
-        if 'foto' in request.files:
-            file = request.files['foto']
-            if file.filename != '':
-                filename = secure_filename(file.filename)
-                filepath = os.path.join('static', 'uploads', filename)
-                file.save(filepath)
-                foto_path = f'/static/uploads/{filename}'
+        # Update status faktur menjadi 'Barang Tiba'
+        db.execute_query("UPDATE purchases SET status_kedatangan = 'Barang Tiba' WHERE no_faktur = %s", (no_faktur,))
         
-        # Buat objek supply
-        new_supply = Supply(
-            no_order=req.get('no_order'),
-            tgl_masuk=req.get('tgl_masuk'),
-            supplier=req.get('supplier'),
-            status_bayar=req.get('status_bayar'),
-            jenis=req.get('jenis'),
-            brand=req.get('brand'),
-            sku=req.get('sku'),
-            imei=req.get('imei'),
-            nama_barang=req.get('nama_barang'),
-            modal_awal=req.get('modal_awal'),
-            lokasi_toko=req.get('lokasi_toko'),
-            lokasi_rak=req.get('lokasi_rak'),
-            status_proses=req.get('status_proses', 'Pending')
-        )
+        # Ambil data supplier dari faktur untuk diteruskan ke manifes
+        purchases_data = db.fetch_all(f"SELECT supplier, status_bayar FROM purchases WHERE no_faktur = '{no_faktur}'")
+        purchase = purchases_data[0] if purchases_data else None
         
-        if inventory_service.add_supply(new_supply, foto_path):
-            return jsonify({"status": "success"}), 201
-        return jsonify({"status": "error", "message": "Gagal menyimpan data."}), 400
+        supplier = purchase['supplier'] if purchase else '-'
+        status_bayar = purchase['status_bayar'] if purchase else 'Tempo'
+
+        # Masukkan barang fisik ke antrean Task Board (tabel supplies)
+        for i, comp in enumerate(komponen):
+            foto_path = ''
+            file_key = f'foto_item_{i}'
+            if file_key in request.files:
+                file = request.files[file_key]
+                if file.filename != '':
+                    filename = secure_filename(f"arr_{int(time.time())}_{file.filename}")
+                    filepath = os.path.join('static', 'uploads', filename)
+                    file.save(filepath)
+                    foto_path = f'/static/uploads/{filename}'
+            
+            no_order_unik = f"ARR-{int(time.time())}-{i+1}"
+            
+            modal = comp.get('harga_beli')
+            if modal is None or modal == '':
+                modal = comp.get('modal_awal', 0)
+                
+            sku_val = comp.get('sku', 'GENERIC')
+            
+            query_supply = """
+                INSERT INTO supplies 
+                (no_order, tgl_masuk, supplier, status_bayar, jenis, brand, sku, imei, nama_barang, modal_awal, lokasi_toko, lokasi_rak, foto, status_proses)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'Pending')
+            """
+            db.execute_query(query_supply, (
+                no_order_unik, tgl_masuk, supplier, status_bayar,
+                comp.get('jenis'), comp.get('brand'), sku_val, comp.get('imei'),
+                comp.get('nama_barang'), modal, 'Gudang Pusat', comp.get('lokasi_rak'), foto_path
+            ))
+
+        db.execute_query("COMMIT;")
+        return jsonify({"status": "success", "message": "Barang tiba disahkan."}), 200
     except Exception as e:
+        db.execute_query("ROLLBACK;")
+        print(f"\n❌ [ERROR GUDANG KEDATANGAN]: {str(e)}\n") 
         return jsonify({"status": "error", "message": str(e)}), 500
 
+# 3. Route GET Pending: Untuk dipakai oleh halaman BOM & QC Task Board
 @app.route('/api/supplies/pending', methods=['GET'])
 def get_pending():
-    return jsonify({"status": "success", "data": inventory_service.get_pending_supplies()})
+    db = Database()
+    try:
+        # Menarik data supplies yang belum diproses menjadi stok
+        query = "SELECT * FROM supplies WHERE status_proses = 'Pending' ORDER BY tgl_masuk ASC"
+        data = db.fetch_all(query)
+        return jsonify({"status": "success", "data": data}), 200
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
-# --- REVERSE BOM DENGAN DUKUNGAN FOTO (FORM DATA) ---
+
+# ==========================================
+# ENDPOINT LAB REPARASI (REPAIRS) - DIPERBAIKI!
+# ==========================================
+
+@app.route('/api/repairs/pending', methods=['GET'])
+def get_repairs():
+    db = Database()
+    try:
+        # Murni SQL: Menarik data STOK yang butuh REPARASI (Bukan pakai inventory_service lagi)
+        query = """
+            SELECT st.*, sp.foto AS foto_datang, sp.tgl_masuk
+            FROM stocks st
+            JOIN supplies sp ON st.no_order = sp.no_order
+            WHERE st.tindakan = 'Perbaiki'
+            ORDER BY sp.tgl_masuk ASC
+        """
+        data = db.fetch_all(query)
+        return jsonify({"status": "success", "data": data}), 200
+    except Exception as e:
+        print(f"❌ [ERROR REPAIR LIST]: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/repairs/execute', methods=['POST'])
+def execute_repair():
+    db = Database()
+    req = request.form
+    
+    id_stock = req.get('id_stock')
+    tambahan_biaya = float(req.get('tambahan_biaya', 0))
+    catatan = req.get('catatan', '')
+    grade_sebelum = req.get('grade_sebelum')
+    grade_sesudah = req.get('grade_sesudah')
+    lokasi_rak_baru = req.get('lokasi_rak_baru')
+    
+    # 1. Amankan File Foto Hasil Reparasi
+    foto_path = ''
+    if 'foto' in request.files:
+        file = request.files['foto']
+        if file.filename != '':
+            filename = secure_filename(f"rep_{int(time.time())}_{file.filename}")
+            filepath = os.path.join('static', 'uploads', filename)
+            file.save(filepath)
+            foto_path = f'/static/uploads/{filename}'
+
+    try:
+        db.execute_query("START TRANSACTION;")
+        
+        # 2. Catat riwayat di tabel repairs
+        query_repair = """
+            INSERT INTO repairs 
+            (id_stock, tgl_reparasi, tambahan_biaya, catatan, grade_sebelum, grade_sesudah, foto_setelah, status_reparasi)
+            VALUES (%s, NOW(), %s, %s, %s, %s, %s, 'Selesai')
+        """
+        db.execute_query(query_repair, (id_stock, tambahan_biaya, catatan, grade_sebelum, grade_sesudah, foto_path))
+        
+        # 3. UPDATE Master Stok (Naik Grade, Pindah Rak, Tambah Modal, & Ubah Tindakan jadi 'Jual')
+        query_update_stock = """
+            UPDATE stocks 
+            SET grade = %s, 
+                lokasi_rak = %s, 
+                tindakan = 'Jual', 
+                total_modal = total_modal + %s
+            WHERE id_stock = %s
+        """
+        db.execute_query(query_update_stock, (grade_sesudah, lokasi_rak_baru, tambahan_biaya, id_stock))
+        
+        db.execute_query("COMMIT;")
+        return jsonify({"status": "success", "message": "Reparasi berhasil diselesaikan dan stok diperbarui."}), 200
+        
+    except Exception as e:
+        db.execute_query("ROLLBACK;")
+        print(f"❌ [ERROR REPAIR EXECUTE]: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# ==========================================
+# ENDPOINT LAINNYA (BOM, GRADING, STOCKS, SALES)
+# ==========================================
+
 @app.route('/api/bom/execute', methods=['POST'])
 def execute_bom():
     try:
@@ -81,13 +248,12 @@ def execute_bom():
         komponen_str = request.form.get('komponen')
         komponen = json.loads(komponen_str)
 
-        # Proses file foto jika ada
         for i, comp in enumerate(komponen):
             file_key = f'foto_{i}'
             if file_key in request.files:
                 file = request.files[file_key]
                 if file.filename != '':
-                    filename = secure_filename(file.filename)
+                    filename = secure_filename(f"bom_{int(time.time())}_{file.filename}")
                     filepath = os.path.join('static', 'uploads', filename)
                     file.save(filepath)
                     comp['foto_path'] = f'/static/uploads/{filename}'
@@ -100,7 +266,7 @@ def execute_bom():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-# --- GRADING DENGAN DUKUNGAN FOTO (FORM DATA) ---
+
 @app.route('/api/grading/execute', methods=['POST'])
 def execute_grading():
     try:
@@ -110,7 +276,7 @@ def execute_grading():
         if 'foto' in request.files:
             file = request.files['foto']
             if file.filename != '':
-                filename = secure_filename(file.filename)
+                filename = secure_filename(f"grd_{int(time.time())}_{file.filename}")
                 filepath = os.path.join('static', 'uploads', filename)
                 file.save(filepath)
                 foto_path = f'/static/uploads/{filename}'
@@ -125,33 +291,6 @@ def execute_grading():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-@app.route('/api/repairs/pending', methods=['GET'])
-def get_repairs():
-    return jsonify({"status": "success", "data": inventory_service.get_repairable_stocks()})
-
-# --- REPARASI DENGAN DUKUNGAN FOTO (FORM DATA) ---
-@app.route('/api/repairs/execute', methods=['POST'])
-def execute_repair():
-    try:
-        req = request.form
-        foto_path = ''
-        
-        if 'foto' in request.files:
-            file = request.files['foto']
-            if file.filename != '':
-                filename = secure_filename(file.filename)
-                filepath = os.path.join('static', 'uploads', filename)
-                file.save(filepath)
-                foto_path = f'/static/uploads/{filename}'
-
-        if inventory_service.process_repair(
-            req.get('id_stock'), req.get('tambahan_biaya'), req.get('catatan', ''), 
-            req.get('grade_sebelum'), req.get('lokasi_rak_baru'), req.get('grade_sesudah'), foto_path
-        ):
-            return jsonify({"status": "success"}), 200
-        return jsonify({"status": "error", "message": "Gagal Reparasi."}), 400
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
 
 # ==========================================
 # ENDPOINTS MASTER DATA (CRUD)
@@ -164,7 +303,6 @@ MASTER_TABLES = {
     'harga': 'master_prices'
 }
 
-# --- PINTU GET: Mengambil Daftar Master Data ---
 @app.route('/api/master/<kategori>', methods=['GET'])
 def get_master_data(kategori):
     tabel = MASTER_TABLES.get(kategori)
@@ -175,7 +313,6 @@ def get_master_data(kategori):
     data = db.fetch_all(f"SELECT * FROM {tabel}")
     return jsonify({"data": data}), 200
 
-# --- PINTU POST: Menyimpan Master Data Baru (Termasuk Pemecahan Unit) ---
 @app.route('/api/master/<kategori>', methods=['POST'])
 def add_master_data(kategori):
     tabel = MASTER_TABLES.get(kategori)
@@ -190,22 +327,18 @@ def add_master_data(kategori):
         brand = data.get('brand')
         seri = data.get('seri')
 
-        # Logika jika input "Unit" (Membaca harga per komponen)
         if jenis_produk.lower() == 'unit':
             harga_parts = data.get('harga_parts', {})
             komponen_list = ['LCD', 'Baterai', 'Frame LCD', 'List LCD', 'Cover Backdoor', 'Lem Advise']
             
             for komp in komponen_list:
-                # Ambil harga per komponen dari dictionary, default 0 jika kosong
                 harga_a = harga_parts.get(komp, {}).get('a', 0)
                 harga_d = harga_parts.get(komp, {}).get('d', 0)
-                
                 db.execute_query(
                     "INSERT INTO master_series (jenis_produk, brand, seri, harga_grade_a, harga_grade_d) VALUES (%s, %s, %s, %s, %s)",
                     (komp, brand, seri, harga_a, harga_d)
                 )
         else:
-            # Jika bukan unit, simpan 1 harga saja seperti biasa
             harga_a = data.get('harga_grade_a', 0)
             harga_d = data.get('harga_grade_d', 0)
             db.execute_query(
@@ -227,7 +360,6 @@ def add_master_data(kategori):
         
     return jsonify({"status": "success"}), 201
 
-# --- PINTU DELETE: Menghapus Master Data ---
 @app.route('/api/master/<kategori>/<int:id>', methods=['DELETE'])
 def delete_master_data(kategori, id):
     tabel = MASTER_TABLES.get(kategori)
@@ -238,19 +370,18 @@ def delete_master_data(kategori, id):
     db.execute_query(f"DELETE FROM {tabel} WHERE id = %s", (id,))
     return jsonify({"status": "success"}), 200
 
+
 @app.route('/api/stocks', methods=['GET'])
 def get_all_stocks():
     db = Database()
-    
-    # Taruh Kodenya di Sini
     query = """
         SELECT 
             st.*, 
             sp.foto AS foto_datang, 
             sp.tgl_masuk,
-            sp.lokasi_toko,            -- INI TAMBAHANNYA
-            sp.status_bayar,           -- INI TAMBAHANNYA
-            sp.imei AS imei_asal,      -- INI TAMBAHANNYA
+            sp.lokasi_toko,
+            sp.status_bayar,
+            sp.imei AS imei_asal,
             DATEDIFF(CURRENT_DATE, sp.tgl_masuk) AS umur_stok,
             (SELECT rp.foto_setelah FROM repairs rp 
              WHERE rp.id_stock = st.id_stock 
@@ -258,27 +389,22 @@ def get_all_stocks():
         FROM stocks st
         JOIN supplies sp ON st.no_order = sp.no_order
     """
-    
     try:
-        # Jalankan query menggunakan method select/fetch yang ada di database.py Anda
-        stocks_data = db.fetch_all(query) # atau db.execute_query(query) tergantung class Anda
+        stocks_data = db.fetch_all(query)
         return jsonify({"status": "success", "data": stocks_data}), 200
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
     
+
 @app.route('/api/dashboard/summary', methods=['GET'])
 def get_dashboard_summary():
     db = Database()
-    
-    # 1. Query untuk angka total card atas
     query_cards = """
         SELECT 
             COUNT(*) as total_stok,
             IFNULL(SUM(total_modal), 0) as total_modal
         FROM stocks;
     """
-    
-    # 2. Query untuk list 4 produk stok tertua (Sesuai Request)
     query_oldest = """
         SELECT 
             st.id_stock,
@@ -291,35 +417,32 @@ def get_dashboard_summary():
         ORDER BY umur_stok DESC
         LIMIT 4;
     """
-    
     try:
         cards_data = db.fetch_one(query_cards)
         oldest_data = db.fetch_all(query_oldest)
-        
         return jsonify({
             "status": "success",
             "data": {
                 "total_stok": cards_data['total_stok'],
                 "total_modal": cards_data['total_modal'],
-                "stok_tertua": oldest_data # Berisi array 4 data produk terlama
+                "stok_tertua": oldest_data
             }
         }), 200
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
-    
+
 
 @app.route('/api/sales', methods=['POST'])
 def create_sale():
     db = Database()
     data = request.json
     
-    # 1. Ambil data header nota
-    no_invoice = data.get('no_invoice') # Generate dari frontend atau backend (contoh: INV-2606-001)
+    no_invoice = data.get('no_invoice')
     nama_pembeli = data.get('nama_pembeli', '')
     no_order_marketplace = data.get('no_order_marketplace', '')
-    sumber_penjualan = data.get('sumber_penjualan') # 'Offline', 'Shopee', dll
+    sumber_penjualan = data.get('sumber_penjualan')
     metode_pembayaran = data.get('metode_pembayaran')
-    items = data.get('items', []) # List of object: [{id_stock: 'STK-LCD...', harga_jual_aktual: 500000}]
+    items = data.get('items', [])
     
     if not items:
         return jsonify({"status": "error", "message": "Keranjang belanja kosong!"}), 400
@@ -328,33 +451,26 @@ def create_sale():
     total_bayar = sum(float(item['harga_jual_aktual']) for item in items)
     
     try:
-        # Matikan auto-commit sementara jika class DB Anda mendukung transaction (opsional, tapi bagus untuk keamanan)
         db.execute_query("SET autocommit = 0;")
         db.execute_query("START TRANSACTION;")
         
-        # 2. Simpan Header Penjualan
         query_sales = """
             INSERT INTO sales (no_invoice, nama_pembeli, no_order_marketplace, sumber_penjualan, total_item, total_bayar, metode_pembayaran)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
         """
         db.execute_query(query_sales, (no_invoice, nama_pembeli, no_order_marketplace, sumber_penjualan, total_item, total_bayar, metode_pembayaran))
         
-        # Ambil ID sales yang baru saja dibuat
         last_insert = db.fetch_one("SELECT LAST_INSERT_ID() as id")
         id_sales = last_insert['id']
         
-        # 3. Looping simpan detail barang & potong stok
         for item in items:
             id_stock = item['id_stock']
             harga_jual = item['harga_jual_aktual']
             
-            # Insert ke sales_items
             db.execute_query(
                 "INSERT INTO sales_items (id_sales, id_stock, harga_jual_aktual) VALUES (%s, %s, %s)",
                 (id_sales, id_stock, harga_jual)
             )
-            
-            # UPDATE status di tabel stocks (SANGAT PENTING!)
             db.execute_query(
                 "UPDATE stocks SET status_barang = 'Terjual' WHERE id_stock = %s",
                 (id_stock,)
@@ -362,7 +478,6 @@ def create_sale():
             
         db.execute_query("COMMIT;")
         db.execute_query("SET autocommit = 1;")
-        
         return jsonify({"status": "success", "message": "Transaksi penjualan berhasil disimpan!"}), 201
 
     except Exception as e:
@@ -370,68 +485,19 @@ def create_sale():
         db.execute_query("SET autocommit = 1;")
         return jsonify({"status": "error", "message": str(e)}), 500
 
+
 @app.route('/api/inventory/available', methods=['GET'])
 def get_available_stocks():
     db = Database()
     query = """
         SELECT id_stock, nama_barang, grade, jenis_cacat, total_modal, lokasi_rak 
         FROM stocks 
-        WHERE status_barang = 'Tersedia'
+        WHERE status_barang = 'Tersedia' AND tindakan != 'Perbaiki'
     """
     try:
         available_stocks = db.fetch_all(query)
         return jsonify({"status": "success", "data": available_stocks}), 200
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
-    
-@app.route('/api/purchases', methods=['POST'])
-def create_purchase():
-    db = Database()
-    data = request.json
-    
-    no_faktur = data.get('no_faktur')
-    tgl_pembelian = data.get('tgl_pembelian')
-    supplier = data.get('supplier')
-    total_nominal = data.get('total_nominal')
-    status_bayar = data.get('status_bayar', 'Tempo')
-    metode_bayar = data.get('metode_bayar')
-    
-    # Detail barang yang di-order (masuk ke manifes supplies)
-    items = data.get('items', []) 
-    
-    try:
-        db.execute_query("START TRANSACTION;")
-        
-        # 1. Simpan Header Pembelian
-        query_purchase = """
-            INSERT INTO purchases (no_faktur, tgl_pembelian, supplier, total_nominal, status_bayar, metode_bayar)
-            VALUES (%s, %s, %s, %s, %s, %s)
-        """
-        db.execute_query(query_purchase, (no_faktur, tgl_pembelian, supplier, total_nominal, status_bayar, metode_bayar))
-        
-        last_insert = db.fetch_one("SELECT LAST_INSERT_ID() as id")
-        id_purchase = last_insert['id']
-        
-        # 2. Simpan komponen masuk ke tabel supplies
-        for item in items:
-            # Generate no_order unik untuk tiap baris supply atau samakan dengan no_faktur (tergantung rule bisnis Anda)
-            no_order_manifes = f"ORD-{no_faktur}-{random.randint(100,999)}" 
-            
-            db.execute_query("""
-                INSERT INTO supplies 
-                (no_order, id_purchase, tgl_masuk, supplier, status_bayar, jenis, brand, sku, nama_barang, modal_awal, lokasi_toko, lokasi_rak, status_proses) 
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """, (
-                no_order_manifes, id_purchase, tgl_pembelian, supplier, status_bayar, 
-                item['jenis'], item['brand'], item['sku'], item['nama_barang'], 
-                item['modal_awal'], "Gudang Pusat", "Rak Transit", "Pending"
-            ))
-            
-        db.execute_query("COMMIT;")
-        return jsonify({"status": "success", "message": "Data pembelian manifes berhasil disimpan!"}), 201
-
-    except Exception as e:
-        db.execute_query("ROLLBACK;")
         return jsonify({"status": "error", "message": str(e)}), 500
 
 if __name__ == '__main__':

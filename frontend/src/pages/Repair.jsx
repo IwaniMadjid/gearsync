@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { Hammer, X } from 'lucide-react';
+import { Hammer, CheckCircle2 } from 'lucide-react';
 import api from '../services/api';
+import { T, Card, CardHeader, Field, Input, Select, GoldBtn, ModalOverlay, ModalBox, ModalHeader, THead } from './ui';
 
 export default function Repair() {
   const [repairItems, setRepairItems] = useState([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [activeItem, setActiveItem] = useState(null);
+  const [activeItem, setActiveItem]   = useState(null);
   
-  // FIX 1: Hapus updateGrade, ganti dengan newGrade yang default-nya mengikuti grade saat ini, dan tambah foto
   const [formData, setFormData] = useState({ 
     tambahan_biaya: '', 
     catatan: '', 
@@ -17,8 +17,12 @@ export default function Repair() {
   });
 
   const fetchRepairs = async () => { 
-    const res = await api.get('/repairs/pending'); 
-    setRepairItems(res.data.data); 
+    try {
+      const res = await api.get('/repairs/pending'); 
+      setRepairItems(res.data.data); 
+    } catch (error) {
+      console.error("Gagal mengambil data", error);
+    }
   };
   
   useEffect(() => { fetchRepairs(); }, []);
@@ -28,7 +32,7 @@ export default function Repair() {
     setFormData({ 
       tambahan_biaya: '', 
       catatan: '', 
-      newGrade: item.grade, // Set default dropdown ke grade saat ini
+      newGrade: item.grade,
       lokasi_rak_baru: item.lokasi_rak,
       foto: null 
     }); 
@@ -38,7 +42,6 @@ export default function Repair() {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    // FIX 2: Gunakan FormData agar bisa mengirim file gambar ke backend Flask
     const payload = new FormData();
     payload.append('id_stock', activeItem.id_stock);
     payload.append('tambahan_biaya', formData.tambahan_biaya);
@@ -63,92 +66,123 @@ export default function Repair() {
   };
 
   return (
-    <div className="space-y-6">
-      <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-5">
-        <h2 className="text-xl font-bold text-zinc-100 mb-4">Meja Reparasi Komponen</h2>
-        <table className="w-full text-left text-sm text-zinc-300">
-          <thead className="bg-zinc-950 text-zinc-400 uppercase text-xs">
-            <tr>
-              <th className="p-4">SKU / Nama</th>
-              <th className="p-4">Grade & Rak</th>
-              <th className="p-4 text-center">Tindakan</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-zinc-800">
-            {repairItems.map((item) => (
-              <tr key={item.id_stock} className="hover:bg-zinc-800/40 transition-colors">
-                <td className="p-4">
-                  <div className="font-mono text-orange-500 font-semibold">{item.id_stock}</div>
-                  <div className="text-zinc-200">{item.nama_barang}</div>
-                </td>
-                <td className="p-4">
-                  <span className="text-blue-400 font-semibold">{item.grade}</span>
-                  <div className="text-xs text-zinc-500 mt-1">{item.lokasi_rak}</div>
-                </td>
-                <td className="p-4 text-center">
-                  <button onClick={() => openRepairModal(item)} className="bg-zinc-800 text-orange-400 hover:text-orange-300 border border-zinc-700 hover:border-orange-500 px-3 py-1.5 rounded text-xs font-semibold transition-colors">
-                    <Hammer className="w-3 h-3 inline mr-1" /> Input Reparasi
-                  </button>
-                </td>
-              </tr>
-            ))}
-            {repairItems.length === 0 && (
-              <tr><td colSpan="3" className="p-8 text-center text-zinc-500">Tidak ada komponen yang masuk meja reparasi.</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      
+      <Card>
+        <CardHeader title="Meja Reparasi Komponen" gold />
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <THead cols={['SKU / Nama', 'Grade & Rak', { label: 'Tindakan', align: 'center' }]} />
+            <tbody>
+              {repairItems.length === 0 && (
+                <tr>
+                  <td colSpan={3} style={{ padding: 32, textAlign: 'center', color: T.textMut, fontSize: '0.78rem' }}>
+                    Tidak ada komponen yang masuk meja reparasi.
+                  </td>
+                </tr>
+              )}
+              {repairItems.map(item => (
+                <tr key={item.id_stock} style={{ borderBottom: `1px solid ${T.border}`, transition: 'background 0.12s' }}
+                  onMouseEnter={e => e.currentTarget.style.background = T.raised}
+                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                >
+                  <td style={{ padding: '12px 16px' }}>
+                    <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.72rem', color: T.gold }}>{item.id_stock}</div>
+                    <div style={{ fontSize: '0.82rem', color: T.textPri, marginTop: 3, fontWeight: 500 }}>{item.nama_barang}</div>
+                  </td>
+                  <td style={{ padding: '12px 16px' }}>
+                    <div style={{ fontSize: '0.82rem', color: T.textPri, fontWeight: 500 }}>{item.grade}</div>
+                    <div style={{ fontSize: '0.68rem', color: T.textMut, marginTop: 2, letterSpacing: '0.06em', textTransform: 'uppercase' }}>{item.lokasi_rak}</div>
+                  </td>
+                  <td style={{ padding: '12px 16px', textAlign: 'center' }}>
+                    <button onClick={() => openRepairModal(item)} style={{ background: T.raised, border: `1px solid ${T.border2}`, color: T.textSec, borderRadius: 3, padding: '7px 14px', fontSize: '0.75rem', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6, transition: 'color 0.15s, border-color 0.15s' }}
+                      onMouseEnter={e => { e.currentTarget.style.color = T.gold; e.currentTarget.style.borderColor = T.gold; }}
+                      onMouseLeave={e => { e.currentTarget.style.color = T.textSec; e.currentTarget.style.borderColor = T.border2; }}>
+                      <Hammer size={13} /> Input Reparasi
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
 
+      {/* Repair Modal */}
       {isModalOpen && activeItem && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
-          <div className="bg-zinc-900 border border-zinc-700 rounded-xl w-full max-w-md p-6 shadow-2xl">
-            <div className="flex justify-between items-center mb-6 border-b border-zinc-800 pb-4">
-              <h3 className="text-lg font-bold text-zinc-100 flex items-center">
-                <Hammer className="w-5 h-5 mr-2 text-orange-500" /> Log Tindakan Reparasi
-              </h3>
-              <button onClick={() => setIsModalOpen(false)} className="text-zinc-400 hover:text-white"><X className="w-5 h-5"/></button>
-            </div>
+        <ModalOverlay onClose={() => setIsModalOpen(false)}>
+          <ModalBox style={{ maxWidth: 550 }}>
+            <ModalHeader title="Log Tindakan Reparasi" onClose={() => setIsModalOpen(false)} />
             
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+            <div style={{ padding: 22, display: 'flex', flexDirection: 'column', gap: 16, overflowY: 'auto' }}>
+              
+              {/* Item Info Box */}
+              <div style={{ background: T.raised, border: `1px solid ${T.border2}`, borderRadius: 4, padding: '14px 16px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 <div>
-                  <label className="block text-xs font-semibold text-zinc-400 mb-1">BIAYA TAMBAHAN (Rp)</label>
-                  <input type="number" value={formData.tambahan_biaya} onChange={(e) => setFormData({...formData, tambahan_biaya: e.target.value})} className="w-full bg-zinc-950 border border-zinc-700 text-orange-400 font-mono px-3 py-2 rounded focus:border-orange-500 focus:outline-none" required />
+                  <p style={{ fontSize: '0.6rem', color: T.textMut, letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 4 }}>Objek Reparasi</p>
+                  <p style={{ fontSize: '0.9rem', color: T.textPri, fontWeight: 500 }}>{activeItem.nama_barang}</p>
                 </div>
-                <div>
-                  <label className="block text-xs font-semibold text-zinc-400 mb-1">PINDAH RAK</label>
-                  <input type="text" value={formData.lokasi_rak_baru} onChange={(e) => setFormData({...formData, lokasi_rak_baru: e.target.value})} className="w-full bg-zinc-950 border border-zinc-700 text-zinc-200 px-3 py-2 rounded focus:border-orange-500 focus:outline-none" required />
+                <div style={{ textAlign: 'right' }}>
+                  <p style={{ fontSize: '0.6rem', color: T.textMut, letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 4 }}>SKU Komponen</p>
+                  <p style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.85rem', color: T.gold }}>{activeItem.id_stock}</p>
                 </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-zinc-400 mb-1">CATATAN TINDAKAN</label>
-                <input type="text" placeholder="Misal: Ganti kaca OCA, lem ulang..." value={formData.catatan} onChange={(e) => setFormData({...formData, catatan: e.target.value})} className="w-full bg-zinc-950 border border-zinc-700 text-zinc-200 px-3 py-2 rounded focus:border-orange-500 focus:outline-none" required />
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+                <Field label="Tambahan Biaya (Rp)" gold>
+                  <Input 
+                    type="number" 
+                    value={formData.tambahan_biaya} 
+                    onChange={e => setFormData({...formData, tambahan_biaya: e.target.value})} 
+                    style={{ color: T.gold, fontFamily: 'JetBrains Mono, monospace' }} 
+                  />
+                </Field>
+                <Field label="Pindah Rak">
+                  <Input 
+                    value={formData.lokasi_rak_baru} 
+                    onChange={e => setFormData({...formData, lokasi_rak_baru: e.target.value})} 
+                    placeholder="Lokasi baru..." 
+                  />
+                </Field>
               </div>
 
-              {/* FIX 3: Beri kebebasan memilih semua Grade */}
-              <div>
-                <label className="block text-xs font-semibold text-zinc-400 mb-1">GRADE SETELAH REPARASI</label>
-                <select value={formData.newGrade} onChange={(e) => setFormData({...formData, newGrade: e.target.value})} className="w-full bg-zinc-950 border border-zinc-700 text-emerald-400 font-semibold px-3 py-2 rounded focus:border-orange-500 focus:outline-none">
+              <Field label="Catatan Tindakan">
+                <Input 
+                  value={formData.catatan} 
+                  onChange={e => setFormData({...formData, catatan: e.target.value})} 
+                  placeholder="Misal: Ganti kaca OCA, lem ulang..." 
+                />
+              </Field>
+
+              <Field label="Grade Setelah Reparasi">
+                <Select value={formData.newGrade} onChange={e => setFormData({...formData, newGrade: e.target.value})}>
                   <option value="Grade A">Grade A (Normal)</option>
                   <option value="Grade B">Grade B (Minus Fisik)</option>
                   <option value="Grade C">Grade C (Gagal Sempurna)</option>
                   <option value="Grade D">Grade D (Mati Total)</option>
-                </select>
-              </div>
+                </Select>
+              </Field>
 
-              {/* FIX 4: Input Foto Upload */}
-              <div>
-                <label className="block text-xs font-semibold text-zinc-400 mb-1">FOTO BUKTI SETELAH REPAIR</label>
-                <input type="file" accept="image/*" onChange={(e) => setFormData({...formData, foto: e.target.files[0]})} className="w-full text-sm text-zinc-400 file:bg-zinc-800 file:text-zinc-300 file:border-0 file:py-2 file:px-3 file:rounded" />
-              </div>
+              <Field label="Foto Bukti Setelah Repair">
+                <div style={{ background: T.raised, border: `1px solid ${T.border2}`, borderRadius: 4, padding: '12px 14px' }}>
+                  <input 
+                    type="file" 
+                    accept="image/*" 
+                    onChange={e => setFormData({...formData, foto: e.target.files[0]})} 
+                    style={{ fontSize: '0.75rem', color: T.textSec, width: '100%' }} 
+                  />
+                </div>
+              </Field>
 
-              <button type="submit" className="w-full bg-orange-600 hover:bg-orange-500 text-white py-3 rounded font-bold mt-6 transition-colors">
-                Simpan Log & Perbarui Stok
-              </button>
-            </form>
-          </div>
-        </div>
+              <GoldBtn onClick={handleSubmit} style={{ width: '100%', padding: '11px', marginTop: 8 }}>
+                <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                  <CheckCircle2 size={14} /> Simpan Log & Perbarui Stok
+                </span>
+              </GoldBtn>
+
+            </div>
+          </ModalBox>
+        </ModalOverlay>
       )}
     </div>
   );

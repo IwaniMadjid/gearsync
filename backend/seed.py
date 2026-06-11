@@ -1,6 +1,7 @@
 import os
 import random
 import qrcode
+import json
 from datetime import date, timedelta
 from database import Database
 
@@ -14,19 +15,31 @@ def generate_seeder():
     db.execute_query("SET FOREIGN_KEY_CHECKS = 0;")
     
     # =========================================================
-    # PERBAIKAN: Paksa MySQL memperlebar kolom grade agar menerima 'Bahan'
+    # PERBAIKAN OTOMATIS STRUKTUR DATABASE (AUTO-FIX)
     # =========================================================
-    print("🛠️  Memperbarui struktur tabel database (Upgrade kolom grade)...")
-    try:
-        # Mengubah ENUM/VARCHAR ketat menjadi VARCHAR longgar (20 karakter)
-        db.execute_query("ALTER TABLE master_spareparts MODIFY COLUMN grade VARCHAR(20);")
-        db.execute_query("ALTER TABLE stocks MODIFY COLUMN grade VARCHAR(20);")
-    except Exception as e:
-        print(f"Note struktur: {e}")
+    print("🛠️  Memperbaiki struktur tabel MySQL secara otomatis...")
+    alter_queries = [
+        "ALTER TABLE master_spareparts MODIFY COLUMN grade VARCHAR(20);",
+        "ALTER TABLE stocks MODIFY COLUMN grade VARCHAR(20);",
+        "ALTER TABLE stocks MODIFY COLUMN status_barang VARCHAR(50) DEFAULT 'Tersedia';",
+        "ALTER TABLE purchases ADD COLUMN bukti_bayar VARCHAR(255) NULL;",
+        "ALTER TABLE purchases ADD COLUMN items TEXT NULL;",
+        "ALTER TABLE purchases ADD COLUMN status_kedatangan VARCHAR(50) DEFAULT 'Pending';"
+    ]
+    
+    for query in alter_queries:
+        try:
+            db.execute_query(query)
+        except Exception:
+            pass # Abaikan jika kolom sudah ada/diperbarui sebelumnya
 
+    # Menghapus data dari hilir ke hulu
+    db.execute_query("DELETE FROM sales_items;")
+    db.execute_query("DELETE FROM sales;")
     db.execute_query("DELETE FROM repairs;")
     db.execute_query("DELETE FROM stocks;")
     db.execute_query("DELETE FROM supplies;")
+    db.execute_query("DELETE FROM purchases;")
     db.execute_query("DELETE FROM master_spareparts;")
     db.execute_query("DELETE FROM master_shops;")
     db.execute_query("DELETE FROM master_series;")
@@ -37,7 +50,7 @@ def generate_seeder():
     for shop in suppliers:
         db.execute_query("INSERT INTO master_shops (nama_toko) VALUES (%s)", (shop,))
 
-    # 2. KAMUS CACAT MASTER (MURNI 100% BERDASARKAN FOTO ANDA)
+    # 2. KAMUS CACAT MASTER
     master_defects = {
         'Grade A': ['Normal', 'NEW'],
         'Grade B': ['KERUT', 'SHEDOW', 'JARONG', 'RETAK', 'TOMPEL', 'RETAK + GREEN', 'RETAK JARONG', 'RETAK TOMPEL', 'RETAK SHADOW', 'SHADOW TOMPEL', 'SKRIT', 'Tompel Kerut', 'GARIS KASAT MATA'],
@@ -74,10 +87,10 @@ def generate_seeder():
         for komp in komponen_list:
             db.execute_query("INSERT INTO master_series (jenis_produk, brand, seri, harga_grade_a, harga_grade_d) VALUES (%s, %s, %s, %s, %s)", (komp, brand, seri, random.randint(5, 15)*100000, random.randint(1, 3)*50000))
 
-    # 4. Suntik 100 Transaksi Simulasi Alur Kerja ERP
-    print("🚀 Menyuntikkan 100 data transaksi simulasi baru...")
+    # 4. Suntik 100 Transaksi Terintegrasi (Purchases -> Supplies -> Stocks)
+    print("🚀 Menyuntikkan 100 data transaksi simulasi (Alur End-to-End)...")
     jenis_pilihan_realistis = ['Unit', 'LCD', 'Baterai', 'Frame LCD', 'List LCD', 'Cover Backdoor', 'Lem Advise']
-    status_bayar_list = ['ready', 'lunas', 'belumlunas', 'tempo']
+    status_bayar_list = ['Lunas', 'Tempo']
     
     part_map = {
         'Unit': 'UNI', 'LCD': 'LCD', 'Baterai': 'BAT',
@@ -85,64 +98,102 @@ def generate_seeder():
     }
     
     for i in range(1, 101):
-        tgl_masuk = date(2026, 1, 1) + timedelta(days=random.randint(0, 149)) 
+        # --- A. FASE PURCHASING (PENGADAAN) ---
+        no_faktur = f"INV-SUP-{i:04d}"
+        tgl_pembelian = date(2026, 1, 1) + timedelta(days=random.randint(0, 140)) 
         supplier = random.choice(suppliers)
         status_bayar = random.choice(status_bayar_list)
         
-        selected_hp = random.choice(hp_data)
-        brand, seri = selected_hp[0], selected_hp[1]
-        jenis = random.choice(jenis_pilihan_realistis)
-        
-        kode_part = part_map.get(jenis, 'GEN')
-        
-        seri_upper = seri.upper().replace(" ", "")
-        jaringan_suffix = 'N'
-        if '5G' in seri_upper:
-            jaringan_suffix = 'G'
-        elif 'LTE' in seri_upper:
-            jaringan_suffix = 'L'
+        is_arrived = random.random() < 0.85
+        status_kedatangan = 'Barang Tiba' if is_arrived else 'Pending'
+
+        num_items_in_invoice = random.randint(1, 4)
+        invoice_items = []
+        total_nominal = 0
+
+        for j in range(num_items_in_invoice):
+            selected_hp = random.choice(hp_data)
+            brand, seri = selected_hp[0], selected_hp[1]
+            jenis = random.choice(jenis_pilihan_realistis)
+            harga_beli = random.randint(5, 45) * 100000
+            nama_barang = seri if jenis == 'Unit' else f"{jenis} {seri}"
             
-        singkatan_seri = seri_upper.replace("5G", "").replace("LTE", "").replace("/", "")
-        singkatan_seri = singkatan_seri.replace("ULTRA", "U").replace("+", "P").replace("FOLD", "FD").replace("FLIP", "FP")
-        
-        sku = f"{kode_part}-{singkatan_seri}{jaringan_suffix}-{random.randint(1000, 9999)}-{i}"
-        imei = f"35{random.randint(1000000000000, 9999999999999)}" if jenis == 'Unit' else ""
-        nama_barang = seri if jenis == 'Unit' else f"{jenis} {seri}"
-        modal_awal = random.randint(5, 45) * 100000
-        no_order = f"ORD-2026-{i:03d}"
-        
-        is_processed = random.random() < 0.75
-        status_proses = 'Selesai' if is_processed else 'Pending'
+            invoice_items.append({
+                "id_temp": f"{i}-{j}",
+                "jenis": jenis,
+                "brand": brand,
+                "seri": seri,
+                "nama_barang": nama_barang,
+                "harga_beli": harga_beli
+            })
+            total_nominal += harga_beli
 
         db.execute_query(
-            "INSERT INTO supplies (no_order, tgl_masuk, supplier, status_bayar, jenis, brand, sku, imei, nama_barang, modal_awal, lokasi_toko, lokasi_rak, status_proses, foto) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-            (no_order, tgl_masuk, supplier, status_bayar, jenis, brand, sku, imei, nama_barang, modal_awal, "Gudang Pusat", "Rak Transit", status_proses, "")
+            """INSERT INTO purchases (no_faktur, tgl_pembelian, supplier, total_nominal, status_bayar, bukti_bayar, items, status_kedatangan) 
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+            (no_faktur, tgl_pembelian, supplier, total_nominal, status_bayar, "", json.dumps(invoice_items), status_kedatangan)
         )
 
-        if is_processed:
-            jenis_stok = jenis
-            nama_stok = nama_barang
+        # --- B. FASE KEDATANGAN BARANG (SUPPLIES) ---
+        if is_arrived:
+            tgl_masuk = tgl_pembelian + timedelta(days=random.randint(1, 5))
             
-            if jenis_stok == 'Unit':
-                jenis_stok = 'LCD'
-                nama_stok = f"LCD {seri}"
-            
-            grade_pilihan = random.choice(['Grade A', 'Grade B', 'Grade C', 'Grade D', 'Bahan'])
-            cacat_terpilih = random.choice(master_defects[grade_pilihan])
-            
-            id_stock = f"STK-{sku}"
-            lokasi_rak = f"Rak {random.choice(['A', 'B', 'C'])}-{random.randint(1, 10)}"
-            tindakan = random.choice(['Jual', 'Perbaiki'])
-            
-            qr = qrcode.make(id_stock)
-            qr_filename = f"{id_stock}.png"
-            qr.save(os.path.join('static', 'qr', qr_filename))
-            qr_path_db = f"/static/qr/{qr_filename}"
-            
-            db.execute_query(
-                "INSERT INTO stocks (id_stock, no_order, nama_barang, jenis, brand, grade, jenis_cacat, modal_awal, total_modal, lokasi_rak, tindakan, qr_code, foto) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                (id_stock, no_order, nama_stok, jenis_stok, brand, grade_pilihan, cacat_terpilih, modal_awal, modal_awal, lokasi_rak, tindakan, qr_path_db, "")
-            )
+            for idx, p_item in enumerate(invoice_items):
+                no_order = f"ARR-{no_faktur}-{idx+1}"
+                jenis = p_item['jenis']
+                brand = p_item['brand']
+                seri = p_item['seri']
+                nama_barang = p_item['nama_barang']
+                modal_awal = p_item['harga_beli']
+                
+                kode_part = part_map.get(jenis, 'GEN')
+                seri_upper = seri.upper().replace(" ", "")
+                jaringan_suffix = 'G' if '5G' in seri_upper else 'L' if 'LTE' in seri_upper else 'N'
+                singkatan_seri = seri_upper.replace("5G", "").replace("LTE", "").replace("/", "")
+                singkatan_seri = singkatan_seri.replace("ULTRA", "U").replace("+", "P").replace("FOLD", "FD").replace("FLIP", "FP")
+                
+                sku = f"{kode_part}-{singkatan_seri}{jaringan_suffix}-{random.randint(1000, 9999)}-{i}"
+                imei = f"35{random.randint(1000000000000, 9999999999999)}" if jenis == 'Unit' else ""
+                
+                is_processed = random.random() < 0.80
+                status_proses = 'Selesai' if is_processed else 'Pending'
+
+                db.execute_query(
+                    """INSERT INTO supplies 
+                       (no_order, tgl_masuk, supplier, status_bayar, jenis, brand, sku, imei, nama_barang, modal_awal, lokasi_toko, lokasi_rak, status_proses, foto) 
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                    (no_order, tgl_masuk, supplier, status_bayar, jenis, brand, sku, imei, nama_barang, modal_awal, "Gudang Pusat", "Rak Transit", status_proses, "")
+                )
+
+                # --- C. FASE GUDANG AKTIF (STOCKS) ---
+                if is_processed:
+                    jenis_stok = jenis
+                    nama_stok = nama_barang
+                    
+                    if jenis_stok == 'Unit':
+                        jenis_stok = 'LCD'
+                        nama_stok = f"LCD {seri}"
+                    
+                    grade_pilihan = random.choice(['Grade A', 'Grade B', 'Grade C', 'Grade D', 'Bahan'])
+                    cacat_terpilih = random.choice(master_defects[grade_pilihan])
+                    
+                    id_stock = f"STK-{sku}"
+                    lokasi_rak = f"Rak {random.choice(['A', 'B', 'C'])}-{random.randint(1, 10)}"
+                    tindakan = random.choice(['Jual', 'Perbaiki'])
+                    
+                    qr = qrcode.make(id_stock)
+                    qr_filename = f"{id_stock}.png"
+                    qr.save(os.path.join('static', 'qr', qr_filename))
+                    qr_path_db = f"/static/qr/{qr_filename}"
+                    
+                    status_barang = 'Terjual' if random.random() < 0.2 else 'Tersedia'
+
+                    db.execute_query(
+                        """INSERT INTO stocks 
+                           (id_stock, no_order, nama_barang, jenis, brand, grade, jenis_cacat, modal_awal, total_modal, lokasi_rak, tindakan, qr_code, foto, status_barang) 
+                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                        (id_stock, no_order, nama_stok, jenis_stok, brand, grade_pilihan, cacat_terpilih, modal_awal, modal_awal, lokasi_rak, tindakan, qr_path_db, "", status_barang)
+                    )
 
     print("\n✅ SEEDING BERHASIL! Struktur tabel otomatis disesuaikan dan data tersimpan tanpa error!")
 

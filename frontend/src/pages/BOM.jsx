@@ -1,387 +1,231 @@
 import React, { useState, useEffect } from 'react';
-import { X, Plus, Trash2, ArrowLeftRight, Component, CheckCircle2 } from 'lucide-react';
+import { Plus, Trash2, CheckCircle2 } from 'lucide-react';
 import api from '../services/api';
+import { T, Card, CardHeader, Field, Input, Select, GoldBtn, ModalOverlay, ModalBox, ModalHeader, THead, Badge } from './ui';
 
 export default function BOM() {
-  const [pendingItems, setPendingItems] = useState([]);
+  const [pendingItems, setPendingItems]     = useState([]);
   const [masterSpareparts, setMasterSpareparts] = useState([]);
-  
-  const [activeItem, setActiveItem] = useState(null);
-  const [isBOMModalOpen, setIsBOMModalOpen] = useState(false);
-  const [isGradeModalOpen, setIsGradeModalOpen] = useState(false);
-  
-  const [bomItems, setBomItems] = useState([]);
-  const [gradeForm, setGradeForm] = useState({ grade: 'Grade A', jenis_cacat: 'Normal', lokasi_rak: '', tindakan: 'Jual', foto: null });
+  const [activeItem, setActiveItem]         = useState(null);
+  const [isBOMOpen, setIsBOMOpen]           = useState(false);
+  const [isGradeOpen, setIsGradeOpen]       = useState(false);
+  const [bomItems, setBomItems]             = useState([]);
+  const [gradeForm, setGradeForm]           = useState({ grade: 'Grade A', jenis_cacat: 'Normal', lokasi_rak: '', tindakan: 'Jual', foto: null });
 
   const fetchData = async () => {
-    try {
-      const [pendingRes, sparepartRes] = await Promise.all([
-        api.get('/supplies/pending'),
-        api.get('/master/sparepart')
-      ]);
-      setPendingItems(pendingRes.data.data);
-      setMasterSpareparts(sparepartRes.data.data);
-    } catch (error) {
-      console.error("Gagal mengambil data", error);
-    }
+    const [p, s] = await Promise.all([api.get('/supplies/pending'), api.get('/master/sparepart')]);
+    setPendingItems(p.data.data); setMasterSpareparts(s.data.data);
   };
-  
   useEffect(() => { fetchData(); }, []);
 
-  // LOGIKA FILTER CACAT UNIVERSAL SINKRON DATABASE
-  const getCacatOptions = (jenisPart, selectedGrade) => {
-    if (!masterSpareparts || masterSpareparts.length === 0) return ['Normal'];
-
-    const filteredParts = masterSpareparts.filter(
-      p => p.part.toLowerCase() === jenisPart.toLowerCase() && p.grade === selectedGrade
-    );
-
-    let extractedCacat = [];
-    filteredParts.forEach(p => {
-      if (p.jenis_cacat) {
-        const splitArr = p.jenis_cacat.split(',').map(s => s.trim()).filter(Boolean);
-        extractedCacat.push(...splitArr);
-      }
-    });
-
-    if (extractedCacat.length === 0) {
-      if (selectedGrade === 'Grade A') return ['Normal', 'NEW'];
-      return ['(Isi Dulu di Master Data)'];
-    }
-    
-    return [...new Set(extractedCacat)];
+  const getCacatOptions = (jenis, grade) => {
+    if (!masterSpareparts.length) return ['Normal'];
+    const f = masterSpareparts.filter(p => p.part.toLowerCase() === jenis.toLowerCase() && p.grade === grade);
+    const all = f.flatMap(p => p.jenis_cacat?.split(',').map(s => s.trim()).filter(Boolean) || []);
+    return all.length ? [...new Set(all)] : grade === 'Grade A' ? ['Normal','NEW'] : ['(Isi di Master Data)'];
   };
 
-  // --- LOGIKA REVERSE BOM ---
-  const openBOMProcess = (item) => {
+  const openBOM = item => {
     setActiveItem(item);
-    const initialCacatOpts = getCacatOptions('LCD', 'Grade A');
-    
-    setBomItems([{ 
-      id: Date.now(), jenis: 'LCD', brand: item.brand, 
-      grade: 'Grade A', jenis_cacat: initialCacatOpts[0], persentase: 0, 
-      lokasi_rak: item.lokasi_rak, tindakan: 'Jual', foto: null 
-    }]);
-    setIsBOMModalOpen(true);
+    const c = getCacatOptions('LCD', 'Grade A');
+    setBomItems([{ id: Date.now(), jenis: 'LCD', brand: item.brand, grade: 'Grade A', jenis_cacat: c[0], persentase: 0, lokasi_rak: item.lokasi_rak, tindakan: 'Jual', foto: null }]);
+    setIsBOMOpen(true);
   };
 
-  const handleAddBomItem = () => {
-    const initialCacatOpts = getCacatOptions('Baterai', 'Grade A');
-    setBomItems([...bomItems, { 
-      id: Date.now(), jenis: 'Baterai', brand: activeItem.brand, 
-      grade: 'Grade A', jenis_cacat: initialCacatOpts[0], persentase: 0, 
-      lokasi_rak: activeItem.lokasi_rak, tindakan: 'Jual', foto: null 
-    }]);
-  };
-
-  const updateBomItem = (id, field, value) => {
-    setBomItems(bomItems.map(item => {
-      if (item.id === id) {
-        if (field === 'jenis') {
-          const newOpts = getCacatOptions(value, item.grade);
-          return { ...item, jenis: value, jenis_cacat: newOpts[0] };
-        }
-        if (field === 'grade') {
-          const newOpts = getCacatOptions(item.jenis, value);
-          return { ...item, grade: value, jenis_cacat: newOpts[0] };
-        }
-        return { ...item, [field]: (field === 'persentase' ? Number(value) : value) };
-      }
-      return item;
-    }));
-  };
-
-  const handleRemoveBomItem = (id) => setBomItems(bomItems.filter(item => item.id !== id));
-
-  const handleExecuteBOM = async () => {
-    if (bomItems.reduce((acc, i) => acc + i.persentase, 0) !== 100) return alert("Total persentase harus 100%!");
-    if (bomItems.some(i => i.jenis_cacat === '(Isi Dulu di Master Data)')) return alert("Ada komponen yang belum memiliki jenis cacat valid!");
-
-    const formData = new FormData();
-    formData.append('no_order', activeItem.no_order);
-    formData.append('modal_induk', activeItem.modal_awal);
-    
-    const dataTeksKomponen = bomItems.map(item => {
-      const { foto, ...rest } = item;
-      return { ...rest, nama: `${item.jenis} ${activeItem.nama_barang}` };
-    });
-    
-    formData.append('komponen', JSON.stringify(dataTeksKomponen));
-    bomItems.forEach((item, index) => {
-      if (item.foto) formData.append(`foto_${index}`, item.foto);
-    });
-
-    try {
-      await api.post('/bom/execute', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
-      setIsBOMModalOpen(false); 
-      fetchData();
-    } catch (error) {
-      alert("Gagal eksekusi BOM");
-    }
-  };
-
-  // --- LOGIKA GRADING (NON-UNIT) ---
-  const openGradeProcess = (item) => {
+  const openGrade = item => {
     setActiveItem(item);
-    const initialCacatOpts = getCacatOptions(item.jenis, 'Grade A');
-    setGradeForm({ grade: 'Grade A', jenis_cacat: initialCacatOpts[0], lokasi_rak: item.lokasi_rak, tindakan: 'Jual', foto: null });
-    setIsGradeModalOpen(true);
+    const c = getCacatOptions(item.jenis, 'Grade A');
+    setGradeForm({ grade: 'Grade A', jenis_cacat: c[0], lokasi_rak: item.lokasi_rak, tindakan: 'Jual', foto: null });
+    setIsGradeOpen(true);
   };
 
-  const handleExecuteGrading = async () => {
-    if (gradeForm.jenis_cacat === '(Isi Dulu di Master Data)') return alert("Harap isi Jenis Cacat terlebih dahulu!");
-
-    const formData = new FormData();
-    formData.append('no_order', activeItem.no_order);
-    formData.append('sku', activeItem.sku);
-    formData.append('nama_barang', activeItem.nama_barang);
-    formData.append('jenis', activeItem.jenis);
-    formData.append('brand', activeItem.brand);
-    formData.append('modal_awal', activeItem.modal_awal);
-    formData.append('grade', gradeForm.grade);
-    formData.append('jenis_cacat', gradeForm.jenis_cacat);
-    formData.append('lokasi_rak', gradeForm.lokasi_rak);
-    formData.append('tindakan', gradeForm.tindakan);
-    if (gradeForm.foto) formData.append('foto', gradeForm.foto);
-
-    try {
-      await api.post('/grading/execute', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
-      setIsGradeModalOpen(false); 
-      fetchData();
-    } catch (error) {
-      alert("Gagal eksekusi Grading");
-    }
+  const addBomItem = () => {
+    const c = getCacatOptions('Baterai', 'Grade A');
+    setBomItems([...bomItems, { id: Date.now(), jenis: 'Baterai', brand: activeItem.brand, grade: 'Grade A', jenis_cacat: c[0], persentase: 0, lokasi_rak: activeItem.lokasi_rak, tindakan: 'Jual', foto: null }]);
   };
+
+  const updateBom = (id, field, value) => setBomItems(bomItems.map(item => {
+    if (item.id !== id) return item;
+    if (field === 'jenis') { const c = getCacatOptions(value, item.grade); return {...item, jenis: value, jenis_cacat: c[0]}; }
+    if (field === 'grade') { const c = getCacatOptions(item.jenis, value); return {...item, grade: value, jenis_cacat: c[0]}; }
+    return {...item, [field]: field === 'persentase' ? Number(value) : value};
+  }));
+
+  const executeBOM = async () => {
+    if (bomItems.reduce((a,i) => a + i.persentase, 0) !== 100) return alert('Total persentase harus 100%');
+    const fd = new FormData();
+    fd.append('no_order', activeItem.no_order);
+    fd.append('modal_induk', activeItem.modal_awal);
+    fd.append('komponen', JSON.stringify(bomItems.map(({foto, ...rest}) => ({...rest, nama: `${rest.jenis} ${activeItem.nama_barang}`}))));
+    bomItems.forEach((item, i) => { if (item.foto) fd.append(`foto_${i}`, item.foto); });
+    try { await api.post('/bom/execute', fd, { headers: { 'Content-Type': 'multipart/form-data' } }); setIsBOMOpen(false); fetchData(); }
+    catch { alert('Gagal eksekusi BOM'); }
+  };
+
+  const executeGrading = async () => {
+    const fd = new FormData();
+    Object.entries({ no_order: activeItem.no_order, sku: activeItem.sku, nama_barang: activeItem.nama_barang, jenis: activeItem.jenis, brand: activeItem.brand, modal_awal: activeItem.modal_awal, grade: gradeForm.grade, jenis_cacat: gradeForm.jenis_cacat, lokasi_rak: gradeForm.lokasi_rak, tindakan: gradeForm.tindakan }).forEach(([k,v]) => fd.append(k, v));
+    if (gradeForm.foto) fd.append('foto', gradeForm.foto);
+    try { await api.post('/grading/execute', fd, { headers: { 'Content-Type': 'multipart/form-data' } }); setIsGradeOpen(false); fetchData(); }
+    catch { alert('Gagal grading'); }
+  };
+
+  const totalPct = bomItems.reduce((a,i) => a + i.persentase, 0);
+  const jenisList = ['LCD','Baterai','Frame LCD','List LCD','Cover Backdoor','Lem Advise'];
+  const gradeList = ['Grade A','Grade B','Grade C','Grade D','Bahan'];
 
   return (
-    <div className="space-y-6">
-      <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-5">
-        <h2 className="text-xl font-bold text-zinc-100 mb-4 flex items-center">
-          <ArrowLeftRight className="w-5 h-5 mr-2 text-orange-500" /> Antrean Reverse BOM & Grading
-        </h2>
-        <table className="w-full text-left text-sm text-zinc-300">
-          <thead className="bg-zinc-950 text-zinc-400 uppercase text-xs border-b border-zinc-800">
-            <tr><th className="p-4">SKU / Nama</th><th className="p-4">IMEI</th><th className="p-4">Modal Dasar</th><th className="p-4 text-center">Tindakan</th></tr>
-          </thead>
-          <tbody className="divide-y divide-zinc-800">
-            {pendingItems.map((item) => (
-              <tr key={item.no_order} className="hover:bg-zinc-800/40">
-                <td className="p-4">
-                  <div className="font-mono text-orange-500 font-semibold">{item.sku}</div>
-                  <div className="text-zinc-200 mt-0.5">{item.nama_barang}</div>
-                  <div className="text-xs text-zinc-500 mt-1 uppercase">{item.jenis} - {item.brand}</div>
-                </td>
-                <td className="p-4 text-zinc-400 font-mono">{item.imei || '-'}</td>
-                <td className="p-4 font-mono font-medium">Rp {Number(item.modal_awal).toLocaleString('id-ID')}</td>
-                <td className="p-4 text-center">
-                  {item.jenis === 'Unit' ? (
-                    <button onClick={() => openBOMProcess(item)} className="bg-orange-600 hover:bg-orange-500 text-white px-4 py-2 rounded text-xs font-semibold shadow-lg">Pecah BOM</button>
-                  ) : (
-                    <button onClick={() => openGradeProcess(item)} className="bg-zinc-700 hover:bg-zinc-600 text-white px-4 py-2 rounded text-xs font-semibold border border-zinc-600">Set Grade</button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <Card>
+        <CardHeader title="Antrean BOM & QC" gold />
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <THead cols={['SKU / Nama','IMEI','Modal Dasar',{ label: 'Tindakan', align: 'center' }]} />
+            <tbody>
+              {pendingItems.length === 0 && (
+                <tr><td colSpan={4} style={{ padding: 32, textAlign: 'center', color: T.textMut, fontSize: '0.78rem' }}>Tidak ada item menunggu proses.</td></tr>
+              )}
+              {pendingItems.map(item => (
+                <tr key={item.no_order} style={{ borderBottom: `1px solid ${T.border}`, transition: 'background 0.12s' }}
+                  onMouseEnter={e => e.currentTarget.style.background = T.raised}
+                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                >
+                  <td style={{ padding: '12px 16px' }}>
+                    <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.72rem', color: T.gold }}>{item.sku}</div>
+                    <div style={{ fontSize: '0.82rem', color: T.textPri, marginTop: 3, fontWeight: 500 }}>{item.nama_barang}</div>
+                    <div style={{ fontSize: '0.68rem', color: T.textMut, marginTop: 2, letterSpacing: '0.06em', textTransform: 'uppercase' }}>{item.jenis} · {item.brand}</div>
+                  </td>
+                  <td style={{ padding: '12px 16px', fontFamily: 'JetBrains Mono, monospace', fontSize: '0.75rem', color: T.textSec }}>{item.imei || '—'}</td>
+                  <td style={{ padding: '12px 16px', fontFamily: 'JetBrains Mono, monospace', fontSize: '0.82rem', color: T.textPri }}>Rp {Number(item.modal_awal).toLocaleString('id-ID')}</td>
+                  <td style={{ padding: '12px 16px', textAlign: 'center' }}>
+                    {item.jenis === 'Unit'
+                      ? <GoldBtn onClick={() => openBOM(item)}>Pecah BOM</GoldBtn>
+                      : <button onClick={() => openGrade(item)} style={{ background: T.raised, border: `1px solid ${T.border2}`, color: T.textSec, borderRadius: 3, padding: '7px 14px', fontSize: '0.75rem', cursor: 'pointer' }}>Set Grade</button>
+                    }
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
 
-      {/* MODAL PECAH BOM */}
-      {isBOMModalOpen && activeItem && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
-          <div className="bg-zinc-900 border border-zinc-700 rounded-xl w-full max-w-6xl flex flex-col max-h-[95vh] shadow-2xl">
-            <div className="bg-zinc-950 p-5 border-b border-zinc-800 flex justify-between items-center shrink-0">
-              <h3 className="text-lg font-bold text-zinc-100 flex items-center"><ArrowLeftRight className="w-5 h-5 mr-2 text-orange-500" /> Eksekusi Reverse BOM</h3>
-              <button onClick={() => setIsBOMModalOpen(false)} className="text-zinc-400 hover:text-white"><X className="w-6 h-6" /></button>
-            </div>
-
-            <div className="p-6 overflow-y-auto flex-1 bg-zinc-900/50">
-              <div className="bg-orange-500/10 border border-orange-500/20 p-4 rounded-lg mb-6 flex justify-between items-center">
+      {/* BOM Modal */}
+      {isBOMOpen && activeItem && (
+        <ModalOverlay onClose={() => setIsBOMOpen(false)}>
+          <ModalBox style={{ maxWidth: 1000 }}>
+            <ModalHeader title="Eksekusi Reverse BOM" onClose={() => setIsBOMOpen(false)} />
+            <div style={{ padding: '16px 22px', flex: 1, overflowY: 'auto' }}>
+              {/* Unit induk info */}
+              <div style={{ background: T.goldBg, border: `1px solid rgba(200,166,96,0.15)`, borderRadius: 4, padding: '14px 18px', marginBottom: 18, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
-                  <p className="text-orange-500 text-xs font-bold tracking-wider mb-1">DATA UNIT INDUK (SERI)</p>
-                  <h4 className="text-xl font-bold text-zinc-100">{activeItem.nama_barang}</h4>
+                  <p style={{ fontSize: '0.6rem', color: T.gold, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 4 }}>Unit Induk</p>
+                  <p style={{ fontSize: '1.05rem', fontWeight: 500, color: T.textPri }}>{activeItem.nama_barang}</p>
                 </div>
-                <div className="text-right">
-                  <p className="text-orange-500 text-xs font-bold tracking-wider mb-1">TOTAL MODAL ASAL</p>
-                  <p className="text-2xl font-mono font-bold text-zinc-100">Rp {Number(activeItem.modal_awal).toLocaleString('id-ID')}</p>
+                <div style={{ textAlign: 'right' }}>
+                  <p style={{ fontSize: '0.6rem', color: T.gold, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 4 }}>Modal Asal</p>
+                  <p style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '1.1rem', color: T.textPri }}>Rp {Number(activeItem.modal_awal).toLocaleString('id-ID')}</p>
                 </div>
               </div>
-              
-              <div className="space-y-4">
-                {bomItems.map((item) => {
-                  const calcModal = (item.persentase / 100) * Number(activeItem.modal_awal);
+
+              {/* BOM items */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {bomItems.map(item => {
+                  const modal = (item.persentase / 100) * Number(activeItem.modal_awal);
                   const cacatList = getCacatOptions(item.jenis, item.grade);
-
                   return (
-                    <div key={item.id} className="flex bg-zinc-950 p-4 rounded-xl border border-zinc-800 shadow-sm relative overflow-hidden group">
-                      <div className="absolute left-0 top-0 bottom-0 w-1 bg-orange-500"></div>
-                      <div className="flex-1 space-y-4 pl-2 pr-6">
-                        <div className="flex items-center gap-2 mb-2 bg-zinc-900 w-fit px-3 py-1.5 rounded-lg border border-zinc-800">
-                          <Component className="w-4 h-4 text-orange-500" />
-                          <span className="text-zinc-200 font-bold text-sm tracking-wide">{item.jenis} {activeItem.nama_barang}</span>
-                        </div>
-
-                        <div className="grid grid-cols-4 gap-4">
-                          <div>
-                            <label className="block text-[10px] font-bold text-zinc-500 mb-1">JENIS PART</label>
-                            <select value={item.jenis} onChange={(e) => updateBomItem(item.id, 'jenis', e.target.value)} className="w-full bg-zinc-900 border border-zinc-800 text-zinc-200 px-3 py-2 rounded text-sm focus:border-orange-500 focus:outline-none">
-                              <option value="LCD">LCD</option><option value="Baterai">Baterai</option><option value="Frame LCD">Frame LCD</option><option value="List LCD">List LCD</option><option value="Cover Backdoor">Cover Backdoor</option><option value="Lem Advise">Lem Advise</option>
-                            </select>
+                    <div key={item.id} style={{ background: T.raised, border: `1px solid ${T.border2}`, borderRadius: 4, padding: '14px 16px', display: 'flex', gap: 14, borderLeft: `3px solid ${T.gold}` }}>
+                      <div style={{ flex: 1, display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+                        <Field label="Jenis Part" gold><Select value={item.jenis} onChange={e => updateBom(item.id,'jenis',e.target.value)}>{jenisList.map(j => <option key={j} value={j}>{j}</option>)}</Select></Field>
+                        <Field label="Grade QC"><Select value={item.grade} onChange={e => updateBom(item.id,'grade',e.target.value)}>{gradeList.map(g => <option key={g} value={g}>{g}</option>)}</Select></Field>
+                        <Field label="Jenis Cacat" gold><Select value={item.jenis_cacat} onChange={e => updateBom(item.id,'jenis_cacat',e.target.value)}>{cacatList.map(c => <option key={c} value={c}>{c}</option>)}</Select></Field>
+                        <Field label="Tindakan"><Select value={item.tindakan} onChange={e => updateBom(item.id,'tindakan',e.target.value)}><option value="Jual">Langsung Jual</option><option value="Perbaiki">Masuk Reparasi</option></Select></Field>
+                        <Field label="Alokasi %" gold>
+                          <Input type="number" min={0} max={100} value={item.persentase} onChange={e => updateBom(item.id,'persentase',e.target.value)} style={{ color: T.gold, fontFamily: 'JetBrains Mono, monospace' }} />
+                        </Field>
+                        <Field label="Nilai (auto)">
+                          <div style={{ background: T.overlay, border: `1px solid ${T.border}`, borderRadius: 3, padding: '8px 12px', fontFamily: 'JetBrains Mono, monospace', fontSize: '0.78rem', color: T.textSec }}>
+                            Rp {modal.toLocaleString('id-ID')}
                           </div>
-                          <div>
-                            <label className="block text-[10px] font-bold text-zinc-500 mb-1">GRADE QC</label>
-                            <select value={item.grade} onChange={(e) => updateBomItem(item.id, 'grade', e.target.value)} className="w-full bg-zinc-900 border border-zinc-800 text-zinc-200 px-3 py-2 rounded text-sm focus:border-orange-500 focus:outline-none">
-                              <option value="Grade A">Grade A</option><option value="Grade B">Grade B</option><option value="Grade C">Grade C</option><option value="Grade D">Grade D</option><option value="Bahan">Bahan</option>
-                            </select>
-                          </div>
-                          <div>
-                            <label className="block text-[10px] font-bold text-orange-500 mb-1">JENIS CACAT</label>
-                            <select value={item.jenis_cacat} onChange={(e) => updateBomItem(item.id, 'jenis_cacat', e.target.value)} className="w-full bg-zinc-900 border border-orange-900/50 text-orange-100 px-3 py-2 rounded text-sm focus:border-orange-500 focus:outline-none">
-                              {cacatList.map(opt => <option key={opt} value={opt}>{opt}</option>)}
-                            </select>
-                          </div>
-                          <div>
-                            <label className="block text-[10px] font-bold text-zinc-500 mb-1">TUJUAN TINDAKAN</label>
-                            <select value={item.tindakan} onChange={(e) => updateBomItem(item.id, 'tindakan', e.target.value)} className="w-full bg-zinc-900 border border-zinc-800 text-zinc-200 px-3 py-2 rounded text-sm focus:border-orange-500 focus:outline-none">
-                              <option value="Jual">Langsung Jual</option><option value="Perbaiki">Masuk Reparasi</option>
-                            </select>
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-4 gap-4 items-end">
-                          <div>
-                            <label className="block text-[10px] font-bold text-zinc-500 mb-1">ALOKASI MODAL (%)</label>
-                            <div className="relative">
-                              <input type="number" min="0" max="100" value={item.persentase} onChange={(e) => updateBomItem(item.id, 'persentase', e.target.value)} className="w-full bg-zinc-900 border border-zinc-800 text-emerald-400 font-bold px-3 py-2 rounded text-sm focus:border-orange-500 focus:outline-none" />
-                              <span className="absolute right-3 top-2 text-zinc-500 text-sm">%</span>
-                            </div>
-                          </div>
-                          <div>
-                            <label className="block text-[10px] font-bold text-zinc-500 mb-1">NILAI FINANSIAL (AUTO)</label>
-                            <div className="bg-zinc-900/50 border border-zinc-800/50 text-zinc-400 font-mono font-medium px-3 py-2 rounded text-sm">Rp {calcModal.toLocaleString('id-ID')}</div>
-                          </div>
-                          <div>
-                            <label className="block text-[10px] font-bold text-zinc-500 mb-1">LOKASI RAK</label>
-                            <input type="text" value={item.lokasi_rak} onChange={(e) => updateBomItem(item.id, 'lokasi_rak', e.target.value)} placeholder="Rak..." className="w-full bg-zinc-900 border border-zinc-800 text-zinc-200 px-3 py-2 rounded text-sm focus:border-orange-500 focus:outline-none" />
-                          </div>
-                          <div>
-                            <label className="block text-[10px] font-bold text-zinc-500 mb-1">BUKTI FOTO</label>
-                            <input type="file" accept="image/*" onChange={(e) => updateBomItem(item.id, 'foto', e.target.files[0])} className="w-full text-xs text-zinc-400 file:bg-zinc-800 file:hover:bg-zinc-700 file:text-zinc-300 file:border-0 file:py-1.5 file:px-3 file:rounded focus:outline-none" />
-                          </div>
-                        </div>
+                        </Field>
+                        <Field label="Lokasi Rak">
+                          <Input value={item.lokasi_rak} onChange={e => updateBom(item.id,'lokasi_rak',e.target.value)} placeholder="Rak…" />
+                        </Field>
+                        <Field label="Foto">
+                          <input type="file" accept="image/*" onChange={e => updateBom(item.id,'foto',e.target.files[0])} style={{ fontSize: '0.72rem', color: T.textSec, width: '100%' }} />
+                        </Field>
                       </div>
-                      <div className="w-16 flex flex-col justify-center items-center border-l border-zinc-800/50">
-                        <button onClick={() => handleRemoveBomItem(item.id)} className="p-4 text-zinc-600 hover:text-red-500 hover:bg-red-500/10 rounded-xl transition-all"><Trash2 className="w-5 h-5" /></button>
-                      </div>
+                      <button onClick={() => setBomItems(bomItems.filter(i => i.id !== item.id))} style={{ alignSelf: 'center', background: 'none', border: 'none', color: T.textMut, cursor: 'pointer', padding: 6, transition: 'color 0.12s' }}
+                        onMouseEnter={e => e.currentTarget.style.color = T.ember}
+                        onMouseLeave={e => e.currentTarget.style.color = T.textMut}>
+                        <Trash2 size={15} />
+                      </button>
                     </div>
                   );
                 })}
               </div>
-              <button onClick={handleAddBomItem} className="mt-5 w-full border-2 border-dashed border-zinc-700 hover:border-orange-500 hover:bg-orange-500/5 text-zinc-400 hover:text-orange-500 py-3 rounded-xl text-sm font-bold flex justify-center items-center transition-colors"><Plus className="w-5 h-5 mr-2" /> Tambah Part Pecahan</button>
+
+              <button onClick={addBomItem} style={{ marginTop: 12, width: '100%', border: `1px dashed ${T.border2}`, background: 'none', borderRadius: 4, padding: '11px', fontSize: '0.78rem', color: T.textMut, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, transition: 'border-color 0.15s, color 0.15s' }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = T.gold; e.currentTarget.style.color = T.gold; }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = T.border2; e.currentTarget.style.color = T.textMut; }}>
+                <Plus size={13} /> Tambah Komponen
+              </button>
             </div>
 
-            <div className="bg-zinc-950 p-5 border-t border-zinc-800 flex justify-between items-center shrink-0">
-              <span className={`text-xl font-bold font-mono ${bomItems.reduce((acc, i) => acc + i.persentase, 0) === 100 ? 'text-emerald-500' : 'text-orange-500'}`}>Total Alokasi: {bomItems.reduce((acc, i) => acc + i.persentase, 0)}%</span>
-              <button onClick={handleExecuteBOM} disabled={bomItems.reduce((acc, i) => acc + i.persentase, 0) !== 100} className="bg-orange-600 hover:bg-orange-500 disabled:opacity-50 disabled:cursor-not-allowed text-white px-8 py-3 rounded font-bold shadow-lg transition-colors">Konversi & Simpan</button>
+            <div style={{ padding: '14px 22px', borderTop: `1px solid ${T.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(12,11,15,0.5)', flexShrink: 0 }}>
+              <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '1rem', color: totalPct === 100 ? T.jade : T.ember, fontWeight: 600 }}>
+                Alokasi: {totalPct}%
+              </span>
+              <GoldBtn onClick={executeBOM} disabled={totalPct !== 100}>Konversi & Simpan</GoldBtn>
             </div>
-          </div>
-        </div>
+          </ModalBox>
+        </ModalOverlay>
       )}
 
-      {/* MODAL GRADING */}
-      {isGradeModalOpen && activeItem && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
-          <div className="bg-zinc-900 border border-zinc-700 rounded-xl w-full max-w-4xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
-            <div className="bg-zinc-950 p-5 border-b border-zinc-800 flex justify-between items-center shrink-0">
-              <h3 className="text-lg font-bold text-zinc-100 flex items-center"><Component className="w-5 h-5 mr-2 text-orange-500" /> Form Set Grade & Evaluasi Fisik</h3>
-              <button onClick={() => setIsGradeModalOpen(false)} className="text-zinc-400 hover:text-white transition-colors"><X className="w-6 h-6"/></button>
-            </div>
-            
-            <div className="p-6 overflow-y-auto flex-1 bg-zinc-900/50">
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                <div className="lg:col-span-5 space-y-4">
-                  <div className="bg-zinc-950 p-4 rounded-xl border border-zinc-800 space-y-3 shadow-inner">
-                    <div>
-                      <p className="text-[10px] text-orange-500 font-bold tracking-wider mb-1">KATEGORI PRODUK</p>
-                      <span className="bg-orange-950/40 text-orange-400 text-xs font-semibold px-2.5 py-1 rounded border border-orange-800/50 uppercase">{activeItem.jenis}</span>
-                    </div>
-                    <div>
-                      <p className="text-[10px] text-zinc-500 font-bold tracking-wider mb-0.5">SERI / NAMA BARANG</p>
-                      <p className="text-zinc-100 font-bold text-lg">{activeItem.nama_barang}</p>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2 border-t border-zinc-900 pt-3">
-                      <div>
-                        <p className="text-[10px] text-zinc-500 font-bold tracking-wider">BRAND</p>
-                        <p className="text-zinc-300 text-sm font-medium">{activeItem.brand}</p>
-                      </div>
-                      <div>
-                        <p className="text-[10px] text-zinc-500 font-bold tracking-wider">KODE MANIFES</p>
-                        <p className="text-zinc-400 text-xs font-mono mt-0.5">{activeItem.no_order}</p>
-                      </div>
-                    </div>
-                    <div className="border-t border-zinc-900 pt-3">
-                      <p className="text-[10px] text-zinc-500 font-bold tracking-wider mb-0.5">MODAL ASAL (TRANSIT)</p>
-                      <p className="text-lg font-mono font-bold text-emerald-400">Rp {Number(activeItem.modal_awal).toLocaleString('id-ID')}</p>
-                    </div>
-                  </div>
-                  <div className="bg-zinc-950 p-4 border border-zinc-800 rounded-xl space-y-2">
-                    <label className="block text-[10px] font-bold text-zinc-400 tracking-wider uppercase">FOTO BUKTI KONDISI FISIK</label>
-                    <input type="file" accept="image/*" onChange={(e) => setGradeForm({...gradeForm, foto: e.target.files[0]})} className="w-full text-xs text-zinc-400 file:bg-zinc-900 file:hover:bg-zinc-800 file:text-zinc-300 file:border file:border-zinc-700 file:py-2 file:px-3 file:rounded focus:outline-none" />
-                  </div>
-                </div>
-
-                <div className="lg:col-span-7 space-y-4 bg-zinc-950/40 border border-zinc-800 p-5 rounded-xl">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-[10px] font-bold text-zinc-400 mb-1.5 tracking-wider">GRADE KELAYAKAN (QC)</label>
-                      <select 
-                        value={gradeForm.grade} 
-                        onChange={(e) => {
-                          const newGrade = e.target.value;
-                          const newCacatOpts = getCacatOptions(activeItem.jenis, newGrade);
-                          setGradeForm({...gradeForm, grade: newGrade, jenis_cacat: newCacatOpts[0]});
-                        }} 
-                        className="w-full bg-zinc-950 border border-zinc-700 text-zinc-200 px-3 py-2.5 rounded text-sm focus:border-orange-500 focus:outline-none"
-                      >
-                        <option value="Grade A">Grade A</option>
-                        <option value="Grade B">Grade B</option>
-                        <option value="Grade C">Grade C</option>
-                        <option value="Grade D">Grade D</option>
-                        <option value="Bahan">Bahan</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-orange-500 mb-1.5 tracking-wider">IDENTIFIKASI JENIS CACAT</label>
-                      <select value={gradeForm.jenis_cacat} onChange={(e) => setGradeForm({...gradeForm, jenis_cacat: e.target.value})} className="w-full bg-zinc-950 border border-orange-700 text-orange-200 px-3 py-2.5 rounded text-sm focus:border-orange-500 focus:outline-none">
-                        {getCacatOptions(activeItem.jenis, gradeForm.grade).map(opt => <option key={opt} value={opt}>{opt}</option>)}
-                      </select>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-[10px] font-bold text-zinc-400 mb-1.5 tracking-wider">ALUR PROSES SELANJUTNYA</label>
-                    <select value={gradeForm.tindakan} onChange={(e) => setGradeForm({...gradeForm, tindakan: e.target.value})} className="w-full bg-zinc-950 border border-zinc-700 text-zinc-200 px-3 py-2.5 rounded text-sm focus:border-orange-500 focus:outline-none">
-                      <option value="Jual">Siap Jual (Masuk Etalase Pasar)</option>
-                      <option value="Perbaiki">Butuh Perbaikan (Masuk Antrean Lab Reparasi)</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-[10px] font-bold text-zinc-400 mb-1.5 tracking-wider">PENEMPATAN LOKASI RAK BARU</label>
-                    <input type="text" value={gradeForm.lokasi_rak} onChange={(e) => setGradeForm({...gradeForm, lokasi_rak: e.target.value})} placeholder="Contoh: Rak B-12Atas" className="w-full bg-zinc-950 border border-zinc-700 text-zinc-200 px-3 py-2.5 rounded text-sm focus:border-orange-500 focus:outline-none" />
-                  </div>
-                  
-                  <div className="pt-4">
-                    <button onClick={handleExecuteGrading} className="w-full bg-orange-600 hover:bg-orange-500 text-white py-3.5 rounded-lg font-bold shadow-lg transition-colors flex justify-center items-center">
-                      <CheckCircle2 className="w-5 h-5 mr-2" /> Sahkan Nilai & Pindahkan ke Stok Master
-                    </button>
-                  </div>
-                </div>
+      {/* Grading Modal */}
+      {isGradeOpen && activeItem && (
+        <ModalOverlay onClose={() => setIsGradeOpen(false)}>
+          <ModalBox style={{ maxWidth: 600 }}>
+            <ModalHeader title="Set Grade & Evaluasi Fisik" onClose={() => setIsGradeOpen(false)} />
+            <div style={{ padding: 22, display: 'flex', flexDirection: 'column', gap: 16, overflowY: 'auto' }}>
+              {/* Item info */}
+              <div style={{ background: T.raised, border: `1px solid ${T.border2}`, borderRadius: 4, padding: '14px 16px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div><p style={{ fontSize: '0.6rem', color: T.textMut, letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 4 }}>Nama</p><p style={{ fontSize: '0.9rem', color: T.textPri, fontWeight: 500 }}>{activeItem.nama_barang}</p></div>
+                <div><p style={{ fontSize: '0.6rem', color: T.textMut, letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 4 }}>Modal Asal</p><p style={{ fontFamily: 'JetBrains Mono, monospace', color: T.jade }}>Rp {Number(activeItem.modal_awal).toLocaleString('id-ID')}</p></div>
               </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+                <Field label="Grade QC">
+                  <Select value={gradeForm.grade} onChange={e => { const g = e.target.value; const c = getCacatOptions(activeItem.jenis, g); setGradeForm({...gradeForm, grade: g, jenis_cacat: c[0]}); }}>
+                    {gradeList.map(g => <option key={g} value={g}>{g}</option>)}
+                  </Select>
+                </Field>
+                <Field label="Jenis Cacat" gold>
+                  <Select value={gradeForm.jenis_cacat} onChange={e => setGradeForm({...gradeForm, jenis_cacat: e.target.value})}>
+                    {getCacatOptions(activeItem.jenis, gradeForm.grade).map(c => <option key={c} value={c}>{c}</option>)}
+                  </Select>
+                </Field>
+                <Field label="Tindakan Lanjut">
+                  <Select value={gradeForm.tindakan} onChange={e => setGradeForm({...gradeForm, tindakan: e.target.value})}>
+                    <option value="Jual">Siap Jual</option><option value="Perbaiki">Masuk Reparasi</option>
+                  </Select>
+                </Field>
+                <Field label="Lokasi Rak Baru">
+                  <Input value={gradeForm.lokasi_rak} onChange={e => setGradeForm({...gradeForm, lokasi_rak: e.target.value})} placeholder="Rak B-12…" />
+                </Field>
+              </div>
+              <Field label="Foto Bukti Kondisi Fisik">
+                <div style={{ background: T.raised, border: `1px solid ${T.border2}`, borderRadius: 4, padding: '12px 14px' }}>
+                  <input type="file" accept="image/*" onChange={e => setGradeForm({...gradeForm, foto: e.target.files[0]})} style={{ fontSize: '0.75rem', color: T.textSec, width: '100%' }} />
+                </div>
+              </Field>
+              <GoldBtn onClick={executeGrading} style={{ width: '100%', padding: '11px' }}>
+                <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                  <CheckCircle2 size={14} /> Sahkan & Pindahkan ke Stok
+                </span>
+              </GoldBtn>
             </div>
-
-          </div>
-        </div>
+          </ModalBox>
+        </ModalOverlay>
       )}
     </div>
   );
