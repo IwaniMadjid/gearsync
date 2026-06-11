@@ -1,0 +1,71 @@
+# =========================
+# FRONTEND (React / Node)
+# =========================
+node_modules/
+dist/
+build/
+.npm/
+
+# Log files
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# =========================
+# BACKEND (Python / Flask)
+# =========================
+# Virtual Environment (Sesuai yang Anda gunakan: venv)
+venv/
+.venv/
+env/
+ENV/
+
+# Compiled Python files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Flask specific
+instance/
+.webassets-cache
+
+# =========================
+# ASET SPESIFIK PROYEK (GearSync)
+# =========================
+# Mengabaikan semua gambar QR Code yang di-generate agar repo tidak berat
+# Namun tetap mempertahankan foldernya jika Anda nanti membuat file .gitkeep di dalamnya
+backend/static/qr/*.png
+static/qr/*.png
+
+# Mengabaikan foto/bukti kondisi fisik yang diunggah
+backend/static/uploads/*.jpg
+backend/static/uploads/*.png
+backend/static/uploads/*.jpeg
+static/uploads/*
+
+# =========================
+# KREDENSIAL & ENVIRONMENT
+# =========================
+# SANGAT PENTING: Jangan sampai password database MySQL Anda bocor ke GitHub!
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.pem
+
+# =========================
+# OS & IDE (Editor)
+# =========================
+# Windows & Mac
+Thumbs.db
+.DS_Store
+
+# Editor settings (VS Code, dll)
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
