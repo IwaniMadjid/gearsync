@@ -34,7 +34,10 @@ export default function Stock() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      
+      <div>
+        <h1 style={{ fontSize: '1.8rem', fontWeight: 800, color: T.textPri, margin: 0, letterSpacing: '-0.02em' }}>Stock.</h1>
+        <p style={{ color: T.textSec, fontSize: '0.8rem', marginTop: 4 }}>Produk siap jual.</p>
+      </div>
       {/* Kolom Pencarian Cepat */}
       <Card>
         <div style={{ padding: '16px 22px', display: 'flex', alignItems: 'center' }}>

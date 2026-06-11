@@ -169,12 +169,12 @@ export default function Purchasing() {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div>
-            <h2 style={{ fontSize: '1.2rem', fontWeight: 600, color: T.textPri, margin: 0 }}>Modul Pengadaan Barang</h2>
-            <p style={{ color: T.textSec, fontSize: '0.75rem', marginTop: 4 }}>Daftar riwayat faktur masuk dan operasional pengiriman.</p>
-          </div>
+            <div>
+            <h1 style={{ fontSize: '1.8rem', fontWeight: 800, color: T.textPri, margin: 0, letterSpacing: '-0.02em' }}>Procurement.</h1>
+            <p style={{ color: T.textSec, fontSize: '0.8rem', marginTop: 4 }}>Pembelian raw material dari supplier.</p>
+            </div>
           <GoldBtn onClick={() => setView('form')} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <Plus size={14} /> Tambah Pengadaan
+            <Plus size={14} /> Tambah Procurement
           </GoldBtn>
         </div>
 

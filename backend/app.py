@@ -162,14 +162,14 @@ def get_pending():
 
 
 # ==========================================
-# ENDPOINT LAB REPARASI (REPAIRS) - DIPERBAIKI!
+# ENDPOINT LAB REPARASI (REPAIRS)
 # ==========================================
 
 @app.route('/api/repairs/pending', methods=['GET'])
 def get_repairs():
     db = Database()
     try:
-        # Murni SQL: Menarik data STOK yang butuh REPARASI (Bukan pakai inventory_service lagi)
+        # Murni SQL: Menarik data STOK yang butuh REPARASI
         query = """
             SELECT st.*, sp.foto AS foto_datang, sp.tgl_masuk
             FROM stocks st
@@ -237,7 +237,197 @@ def execute_repair():
 
 
 # ==========================================
-# ENDPOINT LAINNYA (BOM, GRADING, STOCKS, SALES)
+# ENDPOINT SALES & STOCKS (PENJUALAN & INVENTORI)
+# ==========================================
+
+@app.route('/api/sales', methods=['GET'])
+def get_sales():
+    db = Database()
+    try:
+        # Ambil header nota penjualan
+        query = "SELECT * FROM sales ORDER BY id_sales DESC"
+        sales = db.fetch_all(query)
+        
+        # Ambil detail item untuk masing-masing nota
+        for s in sales:
+            id_sales = s['id_sales']
+            query_items = f"""
+                SELECT si.harga_jual_aktual, st.id_stock, st.nama_barang, st.jenis, st.brand, st.total_modal
+                FROM sales_items si
+                JOIN stocks st ON si.id_stock = st.id_stock
+                WHERE si.id_sales = {id_sales}
+            """
+            s['items'] = db.fetch_all(query_items)
+            
+        return jsonify({"status": "success", "data": sales}), 200
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/sales', methods=['POST'])
+def create_sale():
+    db = Database()
+    data = request.json
+    
+    tgl_transaksi = data.get('tgl_transaksi')
+    no_invoice = data.get('no_invoice')
+    nama_pembeli = data.get('nama_pembeli', '')
+    no_order_marketplace = data.get('no_order_marketplace', '')
+    sumber_penjualan = data.get('sumber_penjualan')
+    metode_pembayaran = data.get('metode_pembayaran')
+    items = data.get('items', [])
+    
+    if not items:
+        return jsonify({"status": "error", "message": "Keranjang belanja kosong!"}), 400
+
+    total_item = len(items)
+    total_bayar = sum(float(item['harga_jual_aktual']) for item in items)
+    
+    try:
+        db.execute_query("SET autocommit = 0;")
+        db.execute_query("START TRANSACTION;")
+        
+        # Simpan Header Penjualan
+        query_sales = """
+            INSERT INTO sales (no_invoice, tgl_transaksi, nama_pembeli, no_order_marketplace, sumber_penjualan, total_item, total_bayar, metode_pembayaran)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        """
+        db.execute_query(query_sales, (no_invoice, tgl_transaksi, nama_pembeli, no_order_marketplace, sumber_penjualan, total_item, total_bayar, metode_pembayaran))
+        
+        cek_id = db.fetch_all(f"SELECT id_sales FROM sales WHERE no_invoice = '{no_invoice}'")
+        id_sales = cek_id[0]['id_sales']
+        
+        # Simpan Item dan Kurangi Stok
+        for item in items:
+            id_stock = item['id_stock']
+            harga_jual = item['harga_jual_aktual']
+            
+            db.execute_query(
+                "INSERT INTO sales_items (id_sales, id_stock, harga_jual_aktual) VALUES (%s, %s, %s)",
+                (id_sales, id_stock, harga_jual)
+            )
+            # UBAH STATUS BARANG MENJADI TERJUAL
+            db.execute_query(
+                "UPDATE stocks SET status_barang = 'Terjual' WHERE id_stock = %s",
+                (id_stock,)
+            )
+            
+        db.execute_query("COMMIT;")
+        db.execute_query("SET autocommit = 1;")
+        return jsonify({"status": "success", "message": "Transaksi penjualan berhasil disimpan!"}), 201
+
+    except Exception as e:
+        db.execute_query("ROLLBACK;")
+        db.execute_query("SET autocommit = 1;")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/inventory/available', methods=['GET'])
+def get_available_stocks():
+    db = Database()
+    # SQL melakukan JOIN ke supplies untuk menghitung umur stok (selisih hari dari tgl_masuk ke hari ini)
+    # Urutan otomatis dipaksa dari umur tertua ke termuda (ORDER BY umur_stok DESC)
+    query = """
+        SELECT 
+            st.id_stock, 
+            st.nama_barang, 
+            st.jenis, 
+            st.brand, 
+            st.grade, 
+            st.jenis_cacat, 
+            st.total_modal, 
+            st.lokasi_rak,
+            DATEDIFF(CURRENT_DATE, sp.tgl_masuk) AS umur_stok
+        FROM stocks st
+        LEFT JOIN supplies sp ON st.no_order = sp.no_order
+        WHERE st.status_barang = 'Tersedia' AND st.tindakan != 'Perbaiki'
+        ORDER BY umur_stok DESC
+    """
+    try:
+        available_stocks = db.fetch_all(query)
+        return jsonify({"status": "success", "data": available_stocks}), 200
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+@app.route('/api/stocks', methods=['GET'])
+def get_all_stocks():
+    db = Database()
+    # Tambahkan WHERE st.status_barang = 'Tersedia' agar barang laku menghilang dari etalase
+    query = """
+        SELECT 
+            st.*, 
+            sp.foto AS foto_datang, 
+            sp.tgl_masuk,
+            sp.lokasi_toko,
+            sp.status_bayar,
+            sp.imei AS imei_asal,
+            DATEDIFF(CURRENT_DATE, sp.tgl_masuk) AS umur_stok,
+            (SELECT rp.foto_setelah FROM repairs rp 
+             WHERE rp.id_stock = st.id_stock 
+             LIMIT 1) AS foto_reparasi
+        FROM stocks st
+        JOIN supplies sp ON st.no_order = sp.no_order
+        WHERE st.status_barang = 'Tersedia'
+        ORDER BY sp.tgl_masuk DESC
+    """
+    try:
+        stocks_data = db.fetch_all(query)
+        return jsonify({"status": "success", "data": stocks_data}), 200
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+    
+
+@app.route('/api/dashboard/summary', methods=['GET'])
+def get_dashboard_summary():
+    db = Database()
+    try:
+        # PENGAMANAN QUERY: Memisahkan SELECT COUNT dan SUM agar tidak crash jika tabel kosong
+        query_sales = """
+            SELECT 
+                (SELECT COUNT(*) FROM sales) as count,
+                (SELECT IFNULL(SUM(total_bayar), 0) FROM sales) as revenue,
+                (SELECT IFNULL(SUM(si.harga_jual_aktual - st.total_modal), 0) 
+                 FROM sales_items si 
+                 JOIN stocks st ON si.id_stock = st.id_stock) as profit
+        """
+        sales_stat = db.fetch_all(query_sales)[0]
+
+        query_platform = "SELECT sumber_penjualan as name, COUNT(*) as value FROM sales GROUP BY sumber_penjualan ORDER BY value DESC"
+        platform_breakdown = db.fetch_all(query_platform)
+
+        query_ops = """
+            SELECT 
+                (SELECT COUNT(*) FROM supplies WHERE status_proses = 'Pending' AND jenis = 'Unit') as pending_bom,
+                (SELECT COUNT(*) FROM supplies WHERE status_proses = 'Pending' AND jenis != 'Unit') as pending_grade,
+                (SELECT COUNT(*) FROM stocks WHERE tindakan = 'Perbaiki' AND status_barang = 'Tersedia') as in_repair,
+                (SELECT IFNULL(SUM(total_modal), 0) FROM stocks WHERE status_barang = 'Tersedia') as asset_value
+        """
+        ops_stat = db.fetch_all(query_ops)[0]
+
+        query_oldest = """
+            SELECT 
+                st.id_stock, st.nama_barang, st.grade, st.lokasi_rak,
+                IFNULL(DATEDIFF(CURRENT_DATE, sp.tgl_masuk), 0) AS umur_stok
+            FROM stocks st
+            LEFT JOIN supplies sp ON st.no_order = sp.no_order
+            WHERE st.status_barang = 'Tersedia'
+            ORDER BY umur_stok DESC LIMIT 5
+        """
+        oldest_data = db.fetch_all(query_oldest)
+
+        return jsonify({
+            "status": "success",
+            "data": {
+                "sales": sales_stat,
+                "platforms": platform_breakdown,
+                "ops": ops_stat,
+                "oldest_stocks": oldest_data
+            }
+        }), 200
+    except Exception as e:
+        print(f"ERR DASHBOARD: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# ==========================================
+# ENDPOINT LAINNYA (BOM & GRADING)
 # ==========================================
 
 @app.route('/api/bom/execute', methods=['POST'])
@@ -369,136 +559,6 @@ def delete_master_data(kategori, id):
     db = Database()
     db.execute_query(f"DELETE FROM {tabel} WHERE id = %s", (id,))
     return jsonify({"status": "success"}), 200
-
-
-@app.route('/api/stocks', methods=['GET'])
-def get_all_stocks():
-    db = Database()
-    query = """
-        SELECT 
-            st.*, 
-            sp.foto AS foto_datang, 
-            sp.tgl_masuk,
-            sp.lokasi_toko,
-            sp.status_bayar,
-            sp.imei AS imei_asal,
-            DATEDIFF(CURRENT_DATE, sp.tgl_masuk) AS umur_stok,
-            (SELECT rp.foto_setelah FROM repairs rp 
-             WHERE rp.id_stock = st.id_stock 
-             LIMIT 1) AS foto_reparasi
-        FROM stocks st
-        JOIN supplies sp ON st.no_order = sp.no_order
-    """
-    try:
-        stocks_data = db.fetch_all(query)
-        return jsonify({"status": "success", "data": stocks_data}), 200
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
-    
-
-@app.route('/api/dashboard/summary', methods=['GET'])
-def get_dashboard_summary():
-    db = Database()
-    query_cards = """
-        SELECT 
-            COUNT(*) as total_stok,
-            IFNULL(SUM(total_modal), 0) as total_modal
-        FROM stocks;
-    """
-    query_oldest = """
-        SELECT 
-            st.id_stock,
-            st.nama_barang,
-            st.grade,
-            st.lokasi_rak,
-            DATEDIFF(CURRENT_DATE, sp.tgl_masuk) AS umur_stok
-        FROM stocks st
-        JOIN supplies sp ON st.no_order = sp.no_order
-        ORDER BY umur_stok DESC
-        LIMIT 4;
-    """
-    try:
-        cards_data = db.fetch_one(query_cards)
-        oldest_data = db.fetch_all(query_oldest)
-        return jsonify({
-            "status": "success",
-            "data": {
-                "total_stok": cards_data['total_stok'],
-                "total_modal": cards_data['total_modal'],
-                "stok_tertua": oldest_data
-            }
-        }), 200
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
-
-
-@app.route('/api/sales', methods=['POST'])
-def create_sale():
-    db = Database()
-    data = request.json
-    
-    no_invoice = data.get('no_invoice')
-    nama_pembeli = data.get('nama_pembeli', '')
-    no_order_marketplace = data.get('no_order_marketplace', '')
-    sumber_penjualan = data.get('sumber_penjualan')
-    metode_pembayaran = data.get('metode_pembayaran')
-    items = data.get('items', [])
-    
-    if not items:
-        return jsonify({"status": "error", "message": "Keranjang belanja kosong!"}), 400
-
-    total_item = len(items)
-    total_bayar = sum(float(item['harga_jual_aktual']) for item in items)
-    
-    try:
-        db.execute_query("SET autocommit = 0;")
-        db.execute_query("START TRANSACTION;")
-        
-        query_sales = """
-            INSERT INTO sales (no_invoice, nama_pembeli, no_order_marketplace, sumber_penjualan, total_item, total_bayar, metode_pembayaran)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-        """
-        db.execute_query(query_sales, (no_invoice, nama_pembeli, no_order_marketplace, sumber_penjualan, total_item, total_bayar, metode_pembayaran))
-        
-        last_insert = db.fetch_one("SELECT LAST_INSERT_ID() as id")
-        id_sales = last_insert['id']
-        
-        for item in items:
-            id_stock = item['id_stock']
-            harga_jual = item['harga_jual_aktual']
-            
-            db.execute_query(
-                "INSERT INTO sales_items (id_sales, id_stock, harga_jual_aktual) VALUES (%s, %s, %s)",
-                (id_sales, id_stock, harga_jual)
-            )
-            db.execute_query(
-                "UPDATE stocks SET status_barang = 'Terjual' WHERE id_stock = %s",
-                (id_stock,)
-            )
-            
-        db.execute_query("COMMIT;")
-        db.execute_query("SET autocommit = 1;")
-        return jsonify({"status": "success", "message": "Transaksi penjualan berhasil disimpan!"}), 201
-
-    except Exception as e:
-        db.execute_query("ROLLBACK;")
-        db.execute_query("SET autocommit = 1;")
-        return jsonify({"status": "error", "message": str(e)}), 500
-
-
-@app.route('/api/inventory/available', methods=['GET'])
-def get_available_stocks():
-    db = Database()
-    query = """
-        SELECT id_stock, nama_barang, grade, jenis_cacat, total_modal, lokasi_rak 
-        FROM stocks 
-        WHERE status_barang = 'Tersedia' AND tindakan != 'Perbaiki'
-    """
-    try:
-        available_stocks = db.fetch_all(query)
-        return jsonify({"status": "success", "data": available_stocks}), 200
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)

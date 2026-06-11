@@ -76,6 +76,11 @@ export default function BOM() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 8 }}> */}
+      <div>
+        <h1 style={{ fontSize: '1.8rem', fontWeight: 800, color: T.textPri, margin: 0, letterSpacing: '-0.02em' }}>Grading.</h1>
+        <p style={{ color: T.textSec, fontSize: '0.8rem', marginTop: 4 }}>Proses penilaian sparepart dan disassembly produk.</p>
+      </div>
       <Card>
         <CardHeader title="Antrean BOM & QC" gold />
         <div style={{ overflowX: 'auto' }}>

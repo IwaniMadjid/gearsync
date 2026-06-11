@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ClipboardCheck, Save, ArrowDownToLine, Package, Eye } from 'lucide-react';
+import { ClipboardCheck, Save, ArrowDownToLine, Package, Eye, CheckCircle, AlertCircle } from 'lucide-react';
 import api from '../services/api';
 import { T, Card, CardHeader, Field, Input, Select, GoldBtn, ModalOverlay, ModalBox, ModalHeader, THead } from './ui';
 
@@ -31,6 +31,18 @@ export default function Supplies() {
   const [items, setItems] = useState([]);
   const [tglMasuk, setTglMasuk] = useState(new Date().toISOString().split('T')[0]);
 
+  // STATE UNTUK NOTIFIKASI KUSTOM (TOAST)
+  const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
+
+  // FUNGSI PEMANGGIL NOTIFIKASI
+  const showToast = (message, type = 'error') => {
+    setToast({ show: true, message, type });
+    // Notifikasi hilang otomatis setelah 3,5 detik
+    setTimeout(() => {
+      setToast({ show: false, message: '', type: 'success' });
+    }, 3500);
+  };
+
   const fetchData = async () => {
     try {
       const [resPurchases, resSupplies] = await Promise.all([
@@ -61,7 +73,7 @@ export default function Supplies() {
       const physicalItems = rawItems.filter(item => item.jenis !== 'Ongkir').map((item, idx) => ({
         ...item, 
         id_row: `${Date.now()}-${idx}`,
-        sku: generateSKU(item.jenis, item.seri), // SKU OTOMATIS TERCIPTA DISINI!
+        sku: generateSKU(item.jenis, item.seri), 
         imei: '', 
         lokasi_rak: '', 
         foto: null
@@ -78,9 +90,11 @@ export default function Supplies() {
 
   const handleSubmitArrival = async (e) => {
     e.preventDefault();
-    if (!selectedFakturNo) return alert("Pilih nomor faktur!");
-    if (items.length === 0) return alert("Tidak ada item fisik.");
-    if (items.some(i => !i.imei || !i.lokasi_rak)) return alert("Isi nomor IMEI dan lokasi rak!");
+    
+    // MENGGANTI NATIVE ALERT DENGAN TOAST KUSTOM
+    if (!selectedFakturNo) return showToast("Silakan pilih nomor faktur terlebih dahulu!", "error");
+    if (items.length === 0) return showToast("Tidak ada item fisik dalam manifes ini.", "error");
+    if (items.some(i => !i.imei || !i.lokasi_rak)) return showToast("Nomor IMEI dan Lokasi Rak pada semua baris wajib diisi!", "error");
 
     setIsSubmitting(true);
     const fd = new FormData();
@@ -91,11 +105,11 @@ export default function Supplies() {
 
     try {
       await api.post('/supplies/execute', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
-      alert(`Sukses! Manifes disahkan.`);
+      showToast("SKU Diterima", "success");
       closeAndResetModal();
       fetchData(); 
     } catch (error) {
-      alert("Gagal memproses kedatangan.");
+      showToast("Gagal memproses kedatangan barang. Periksa koneksi server Anda.", "error");
     } finally {
       setIsSubmitting(false);
     }
@@ -111,8 +125,22 @@ export default function Supplies() {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, position: 'relative' }}>
       
+      {/* NOTIFIKASI KUSTOM MELAYANG (TOAST) */}
+      {toast.show && (
+        <div style={{
+          position: 'fixed', bottom: 32, right: 32, zIndex: 99999,
+          background: T.raised, border: `1px solid ${toast.type === 'success' ? T.jade : T.ember}`,
+          padding: '14px 24px', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 12,
+          boxShadow: '0 12px 40px rgba(0,0,0,0.6)', color: T.textPri, fontSize: '0.85rem', fontWeight: 500,
+          transition: 'all 0.3s ease-in-out'
+        }}>
+          {toast.type === 'success' ? <CheckCircle size={18} color={T.jade} /> : <AlertCircle size={18} color={T.ember} />}
+          {toast.message}
+        </div>
+      )}
+
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 8 }}>
         <div>
           <h1 style={{ fontSize: '2.5rem', fontWeight: 800, color: T.textPri, letterSpacing: '-0.02em', margin: 0 }}>Kedatangan Barang.</h1>
@@ -127,7 +155,7 @@ export default function Supplies() {
         <CardHeader title="Histori Manifes Barang Tiba (Supplies)" gold />
         <div style={{ overflowX: 'auto', minHeight: 400 }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <THead cols={['Tgl. Masuk & Kode SKU', 'Identitas Barang', 'IMEI', 'Rak & Harga Beli', {label: 'Status QC', align: 'center'}, {label: 'Aksi', align: 'center'}]} />
+            <THead cols={['Tgl. Masuk & Kode SKU', 'Identitas Barang', 'Nomor IMEI / Seri', 'Lokasi & Harga Beli', {label: 'Status QC', align: 'center'}, {label: 'Aksi', align: 'center'}]} />
             <tbody>
               {suppliesList.length === 0 ? (
                 <tr><td colSpan={6} style={{ padding: 40, textAlign: 'center', color: T.textMut, fontSize: '0.85rem', fontWeight: 600 }}>Belum ada barang yang tiba di gudang.</td></tr>
@@ -244,14 +272,29 @@ export default function Supplies() {
                 <Field label="Tanggal Masuk (Fisik Tiba)"><Input type="date" value={tglMasuk} onChange={e => setTglMasuk(e.target.value)} required /></Field>
               </div>
 
+              {/* PERBAIKAN: METODE BAYAR DIGANTI MENJADI TANGGAL ORDER */}
               {fakturDetail && (
                 <div style={{ background: T.goldBg, border: `1px solid ${T.gold}40`, borderRadius: 6, padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div style={{ display: 'flex', gap: 24 }}>
-                    <div><p style={{ fontSize: '0.65rem', color: T.gold, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Supplier</p><p style={{ fontSize: '0.85rem', color: T.textPri, fontWeight: 600, marginTop: 2 }}>{fakturDetail.supplier}</p></div>
-                    <div><p style={{ fontSize: '0.65rem', color: T.gold, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Metode Bayar</p><p style={{ fontSize: '0.85rem', color: T.textPri, fontWeight: 600, marginTop: 2 }}>{fakturDetail.metode_bayar}</p></div>
-                    <div><p style={{ fontSize: '0.65rem', color: T.gold, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Status Tagihan</p><p style={{ fontSize: '0.85rem', color: fakturDetail.status_bayar === 'Lunas' ? T.jade : T.ember, fontWeight: 800, marginTop: 2, textTransform: 'uppercase' }}>{fakturDetail.status_bayar}</p></div>
+                    <div>
+                      <p style={{ fontSize: '0.65rem', color: T.gold, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Supplier</p>
+                      <p style={{ fontSize: '0.85rem', color: T.textPri, fontWeight: 600, marginTop: 2 }}>{fakturDetail.supplier}</p>
+                    </div>
+                    <div>
+                      <p style={{ fontSize: '0.65rem', color: T.gold, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tanggal Order</p>
+                      <p style={{ fontSize: '0.85rem', color: T.textPri, fontWeight: 600, marginTop: 2 }}>
+                        {fakturDetail.tgl_pembelian ? new Date(fakturDetail.tgl_pembelian).toLocaleDateString('id-ID') : '-'}
+                      </p>
+                    </div>
+                    <div>
+                      <p style={{ fontSize: '0.65rem', color: T.gold, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Status Tagihan</p>
+                      <p style={{ fontSize: '0.85rem', color: fakturDetail.status_bayar === 'Lunas' ? T.jade : T.ember, fontWeight: 800, marginTop: 2, textTransform: 'uppercase' }}>{fakturDetail.status_bayar}</p>
+                    </div>
                   </div>
-                  <div style={{ textAlign: 'right' }}><p style={{ fontSize: '0.65rem', color: T.gold, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Total Pembelian</p><p style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '1.1rem', color: T.gold, fontWeight: 600, marginTop: 2 }}>Rp {Number(fakturDetail.total_nominal).toLocaleString('id-ID')}</p></div>
+                  <div style={{ textAlign: 'right' }}>
+                    <p style={{ fontSize: '0.65rem', color: T.gold, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Total Pembelian</p>
+                    <p style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '1.1rem', color: T.gold, fontWeight: 600, marginTop: 2 }}>Rp {Number(fakturDetail.total_nominal).toLocaleString('id-ID')}</p>
+                  </div>
                 </div>
               )}
 
@@ -273,7 +316,7 @@ export default function Supplies() {
                           <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.8rem', color: T.textSec, marginTop: 6, fontWeight: 600 }}>Rp {Number(item.harga_beli).toLocaleString('id-ID')}</div>
                         </div>
                         <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1.5fr 1fr 1.5fr', gap: 16 }}>
-                          <Field label="Nomor IMEI / Serial Unit" gold><Input value={item.imei} onChange={e => updateItemManual(item.id_row, 'imei', e.target.value)} placeholder="Ketik IMEI fisik..." style={{ fontFamily: 'JetBrains Mono, monospace', color: T.gold }} /></Field>
+                          <Field label="Nomor IMEI / Serial Unit" gold><Input value={item.imei} onChange={e => updateItemManual(item.id_row, 'imei', e.target.value)} placeholder="Ketik IMEI fisik..." style={{ fontFamily: 'JetBrains Mono, monospace', color: T.gold }} required /></Field>
                           <Field label="Lokasi Rak" gold><Input value={item.lokasi_rak} onChange={e => updateItemManual(item.id_row, 'lokasi_rak', e.target.value)} placeholder="Misal: RAK-A1" required /></Field>
                           <Field label="Foto Fisik Barang"><div style={{ background: T.surface, border: `1px solid ${T.border2}`, borderRadius: 3, padding: '6px 10px' }}><input type="file" accept="image/*" onChange={e => updateItemManual(item.id_row, 'foto', e.target.files[0])} style={{ fontSize: '0.7rem', color: T.textSec, width: '100%' }} /></div></Field>
                         </div>
@@ -283,7 +326,8 @@ export default function Supplies() {
                 </div>
               </div>
             </div>
-            <div style={{ padding: '16px 24px', borderTop: `1px solid ${T.border}`, background: 'rgba(12,11,15,0.8)', display: 'flex', justify穫ontent: 'space-between', alignItems: 'center' }}>
+            <div style={{ padding: '16px 24px', borderTop: `1px solid ${T.border}`, background: 'rgba(12,11,15,0.8)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.75rem', color: T.textMut }}><ClipboardCheck size={14} color={T.jade} /><span>SKU akan dicetak dan masuk antrean <strong>Task Board</strong>.</span></div>
               <GoldBtn onClick={handleSubmitArrival} disabled={isSubmitting || items.length === 0} style={{ display: 'flex', alignItems: 'center', gap: 8 }}><Save size={14} /> {isSubmitting ? 'Memproses...' : 'Sahkan Barang Tiba'}</GoldBtn>
             </div>
           </ModalBox>

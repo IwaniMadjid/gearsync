@@ -10,30 +10,27 @@ def generate_seeder():
     
     if not os.path.exists(os.path.join('static', 'qr')):
         os.makedirs(os.path.join('static', 'qr'))
+    if not os.path.exists(os.path.join('static', 'uploads')):
+        os.makedirs(os.path.join('static', 'uploads'))
 
     print("♻️  Membersihkan data lama agar struktur sinkron...")
     db.execute_query("SET FOREIGN_KEY_CHECKS = 0;")
     
-    # =========================================================
-    # PERBAIKAN OTOMATIS STRUKTUR DATABASE (AUTO-FIX)
-    # =========================================================
-    print("🛠️  Memperbaiki struktur tabel MySQL secara otomatis...")
+    # AUTO-FIX STRUKTUR TABEL (Abaikan jika muncul warning duplicate di terminal)
     alter_queries = [
         "ALTER TABLE master_spareparts MODIFY COLUMN grade VARCHAR(20);",
         "ALTER TABLE stocks MODIFY COLUMN grade VARCHAR(20);",
         "ALTER TABLE stocks MODIFY COLUMN status_barang VARCHAR(50) DEFAULT 'Tersedia';",
         "ALTER TABLE purchases ADD COLUMN bukti_bayar VARCHAR(255) NULL;",
         "ALTER TABLE purchases ADD COLUMN items TEXT NULL;",
-        "ALTER TABLE purchases ADD COLUMN status_kedatangan VARCHAR(50) DEFAULT 'Pending';"
+        "ALTER TABLE purchases ADD COLUMN status_kedatangan VARCHAR(50) DEFAULT 'Pending';",
+        "ALTER TABLE sales ADD COLUMN tgl_transaksi DATE NULL AFTER no_invoice;"
     ]
-    
     for query in alter_queries:
-        try:
-            db.execute_query(query)
-        except Exception:
-            pass # Abaikan jika kolom sudah ada/diperbarui sebelumnya
+        try: db.execute_query(query)
+        except Exception: pass
 
-    # Menghapus data dari hilir ke hulu
+    # MENGHAPUS DATA LAMA
     db.execute_query("DELETE FROM sales_items;")
     db.execute_query("DELETE FROM sales;")
     db.execute_query("DELETE FROM repairs;")
@@ -45,157 +42,133 @@ def generate_seeder():
     db.execute_query("DELETE FROM master_series;")
     db.execute_query("SET FOREIGN_KEY_CHECKS = 1;")
 
-    # 1. Suntik Data Master Toko / Supplier
+    # 1. MASTER TOKO
     suppliers = ['Batam Sparing', 'Roxy Grosir', 'Maju Jaya Parts', 'iBox Copotan', 'Toko Rongsok JKT']
     for shop in suppliers:
         db.execute_query("INSERT INTO master_shops (nama_toko) VALUES (%s)", (shop,))
 
-    # 2. KAMUS CACAT MASTER
+    # 2. MASTER CACAT & SPAREPART
     master_defects = {
         'Grade A': ['Normal', 'NEW'],
-        'Grade B': ['KERUT', 'SHEDOW', 'JARONG', 'RETAK', 'TOMPEL', 'RETAK + GREEN', 'RETAK JARONG', 'RETAK TOMPEL', 'RETAK SHADOW', 'SHADOW TOMPEL', 'SKRIT', 'Tompel Kerut', 'GARIS KASAT MATA'],
-        'Grade C': ['GARISLINE', 'GARIS LEBIH DARI 2', 'TOMPEL+GARIS', 'RETAK TOMPEL FLIKER', 'SENTUH SERET', 'RETAK GARIS', 'SHADOW GARIS', 'GARIS SENTUH', 'RETAK SENTUH SERET', 'RETAK SENTUH SHADOW', 'RETAK GARIS SHADOW', 'RETAK GARIS TOMPEL SENTUH', 'RETAK TOMPEL SENTUH', 'RETAK SENTUH', 'SHADOW SENTUH', 'GARIS SHADOW TOMPEL', 'TOMPEL SENTUH', 'GARIS JARONG', 'GARIS TOMPEL FX', 'RETAK GARIS TOMPEL', 'GARIS TOMPEL SENTUH', 'GARIS SHADOW SENTUH', 'Garis GreenScreen', 'Garis AOD', 'Tompel Garis Greenscreen', 'TOMPEL GARIS JARONG', 'TOMPEL LEBIH DARI 2', 'GARIS 2', 'GARIS + SENTUH SERET', 'TOMPEL KECIL + SHADOW'],
-        'Bahan': ['BAHAN FLEXI', 'BAHAN JEMPER', 'BAHAN SOKET', 'BAHAN BONDING'],
-        'Grade D': ['PECAH TOMPEL', 'PECAH GARIS', 'GARIS BANYAK', 'GARIS TOMPEL', 'GARIS BANYAK + RETAK', 'GARIS RETAK JARONG']
+        'Grade B': ['SHEDOW', 'JARONG', 'SKRIT'],
+        'Grade C': ['GARISLINE', 'TOMPEL+GARIS', 'SENTUH SERET'],
+        'Grade D': ['PECAH TOMPEL', 'GARIS BANYAK']
     }
-
-    komponen_list = ['LCD', 'Baterai', 'Frame LCD', 'List LCD', 'Cover Backdoor', 'Lem Advise']
-
-    print("🚀 Menyuntikkan Kamus Cacat Universal Sesuai Foto...")
+    komponen_list = ['LCD', 'Baterai', 'Frame LCD', 'Cover Backdoor']
+    
+    print("🚀 Menyuntikkan Data Master...")
     for part in komponen_list:
         for grade, defects in master_defects.items():
             for defect in defects:
                 db.execute_query("INSERT INTO master_spareparts (part, grade, jenis_cacat) VALUES (%s, %s, %s)", (part, grade, defect))
 
-    # 3. KATALOG MURNI SAMSUNG
-    samsung_models = [
-        'S26', 'S26+', 'S26 Ultra', 'S25', 'S25+', 'S25 Ultra', 'S24', 'S24+', 'S24 Ultra', 'S24 FE',
-        'S23', 'S23+', 'S23 Ultra', 'S23 FE', 'S22', 'S22+', 'S22 Ultra', 'S21', 'S21+', 'S21 Ultra', 'S21 FE',
-        'Z Fold7', 'Z Flip7', 'Z Fold6', 'Z Flip6', 'Z Fold5', 'Z Flip5', 'Z Fold4', 'Z Flip4', 'Z Fold3', 'Z Flip3',
-        'A57 5G', 'A37 5G', 'A26 5G', 'A17 5G', 'A56 5G', 'A36 5G', 'A16 5G/LTE', 'A06', 'A55 5G', 'A35 5G',
-        'A25 5G', 'A15 5G/LTE', 'A05', 'A05s', 'A54 5G', 'A34 5G', 'A24', 'A14 5G/LTE', 'A04', 'A04s', 'A04e',
-        'A73 5G', 'A53 5G', 'A33 5G', 'A23 5G/LTE', 'A13', 'A03', 'A03s', 'A03 Core', 'A72', 'A52', 'A52 5G',
-        'A52s 5G', 'A32', 'A32 5G', 'A22', 'A22 5G', 'A12', 'A02', 'A02s',
-        'M55', 'M35', 'M15', 'M05', 'M54 5G', 'M34 5G', 'M14 5G', 'M53 5G', 'M33 5G', 'M23 5G', 'M13',
-        'M52 5G', 'M32', 'M22', 'M12', 'M62', 'M51', 'M21'
-    ]
-
+    # 3. MASTER HP
+    samsung_models = ['S26 Ultra', 'Z Fold6', 'A55 5G', 'M54 5G', 'S24']
     hp_data = [('Samsung', model) for model in samsung_models]
-
     for brand, seri in hp_data:
-        db.execute_query("INSERT INTO master_series (jenis_produk, brand, seri, harga_grade_a, harga_grade_d) VALUES (%s, %s, %s, %s, %s)", ('Unit', brand, seri, random.randint(15, 50)*100000, random.randint(1, 5)*100000))
-        for komp in komponen_list:
-            db.execute_query("INSERT INTO master_series (jenis_produk, brand, seri, harga_grade_a, harga_grade_d) VALUES (%s, %s, %s, %s, %s)", (komp, brand, seri, random.randint(5, 15)*100000, random.randint(1, 3)*50000))
+        db.execute_query("INSERT INTO master_series (jenis_produk, brand, seri, harga_grade_a, harga_grade_d) VALUES (%s, %s, %s, %s, %s)", ('Unit', brand, seri, 2500000, 500000))
 
-    # 4. Suntik 100 Transaksi Terintegrasi (Purchases -> Supplies -> Stocks)
-    print("🚀 Menyuntikkan 100 data transaksi simulasi (Alur End-to-End)...")
-    jenis_pilihan_realistis = ['Unit', 'LCD', 'Baterai', 'Frame LCD', 'List LCD', 'Cover Backdoor', 'Lem Advise']
-    status_bayar_list = ['Lunas', 'Tempo']
+    print("🚀 Menyuntikkan 5 Skenario Data Presisi untuk Pengujian UI...")
     
-    part_map = {
-        'Unit': 'UNI', 'LCD': 'LCD', 'Baterai': 'BAT',
-        'Frame LCD': 'FRM', 'List LCD': 'LST', 'Cover Backdoor': 'BCK', 'Lem Advise': 'LEM'
-    }
-    
-    for i in range(1, 101):
-        # --- A. FASE PURCHASING (PENGADAAN) ---
-        no_faktur = f"INV-SUP-{i:04d}"
-        tgl_pembelian = date(2026, 1, 1) + timedelta(days=random.randint(0, 140)) 
-        supplier = random.choice(suppliers)
-        status_bayar = random.choice(status_bayar_list)
+    part_map = {'Unit': 'UNI', 'LCD': 'LCD', 'Baterai': 'BAT', 'Frame LCD': 'FRM', 'Cover Backdoor': 'BCK'}
+    pembeli_list = ['Budi Servis', 'Andi Cell', 'Cika Repair', 'Dodi Sparepart', 'Eka Gadget']
+
+    for i in range(1, 6):
+        base_date = date(2026, 5, 1) + timedelta(days=i*2)
+        supplier_terpilih = suppliers[i-1]
+        hp_terpilih = hp_data[i-1]
+        brand, seri = hp_terpilih[0], hp_terpilih[1]
+
+        singkatan_seri = seri.upper().replace("5G", "").replace(" ", "").replace("ULTRA", "U").replace("FOLD", "FD")
+        suffix = 'G' if '5G' in seri else 'N'
+
+        # --- A. BUAT 1 FAKTUR PURCHASING ---
+        no_faktur = f"INV-SUP-100{i}"
         
-        is_arrived = random.random() < 0.85
-        status_kedatangan = 'Barang Tiba' if is_arrived else 'Pending'
+        skenario_items = [
+            {'jenis': 'Unit', 'tujuan': 'BOM', 'harga': 1500000},
+            {'jenis': 'LCD', 'tujuan': 'Grading', 'harga': 800000},
+            {'jenis': 'Baterai', 'tujuan': 'Repair', 'harga': 150000},
+            {'jenis': 'Frame LCD', 'tujuan': 'StokJual', 'harga': 200000},
+            {'jenis': 'Cover Backdoor', 'tujuan': 'Sales', 'harga': 100000}
+        ]
 
-        num_items_in_invoice = random.randint(1, 4)
-        invoice_items = []
+        invoice_items_json = []
         total_nominal = 0
 
-        for j in range(num_items_in_invoice):
-            selected_hp = random.choice(hp_data)
-            brand, seri = selected_hp[0], selected_hp[1]
-            jenis = random.choice(jenis_pilihan_realistis)
-            harga_beli = random.randint(5, 45) * 100000
-            nama_barang = seri if jenis == 'Unit' else f"{jenis} {seri}"
-            
-            invoice_items.append({
-                "id_temp": f"{i}-{j}",
-                "jenis": jenis,
-                "brand": brand,
-                "seri": seri,
-                "nama_barang": nama_barang,
-                "harga_beli": harga_beli
+        for j, sk in enumerate(skenario_items):
+            nama_barang = seri if sk['jenis'] == 'Unit' else f"{sk['jenis']} {seri}"
+            invoice_items_json.append({
+                "id_temp": f"{i}-{j}", "jenis": sk['jenis'], "brand": brand, 
+                "seri": seri, "nama_barang": nama_barang, "harga_beli": sk['harga']
             })
-            total_nominal += harga_beli
+            total_nominal += sk['harga']
 
         db.execute_query(
             """INSERT INTO purchases (no_faktur, tgl_pembelian, supplier, total_nominal, status_bayar, bukti_bayar, items, status_kedatangan) 
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
-            (no_faktur, tgl_pembelian, supplier, total_nominal, status_bayar, "", json.dumps(invoice_items), status_kedatangan)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, 'Barang Tiba')""",
+            (no_faktur, base_date, supplier_terpilih, total_nominal, 'Lunas', '', json.dumps(invoice_items_json))
         )
 
-        # --- B. FASE KEDATANGAN BARANG (SUPPLIES) ---
-        if is_arrived:
-            tgl_masuk = tgl_pembelian + timedelta(days=random.randint(1, 5))
+        # --- B. BUAT KEDATANGAN BARANG ---
+        tgl_masuk = base_date + timedelta(days=1)
+        
+        for idx, sk in enumerate(skenario_items):
+            no_order = f"ARR-{no_faktur}-{idx+1}"
+            sku = f"{part_map[sk['jenis']]}-{singkatan_seri}{suffix}-{random.randint(1000,9999)}-{i}"
+            nama_barang = seri if sk['jenis'] == 'Unit' else f"{sk['jenis']} {seri}"
             
-            for idx, p_item in enumerate(invoice_items):
-                no_order = f"ARR-{no_faktur}-{idx+1}"
-                jenis = p_item['jenis']
-                brand = p_item['brand']
-                seri = p_item['seri']
-                nama_barang = p_item['nama_barang']
-                modal_awal = p_item['harga_beli']
-                
-                kode_part = part_map.get(jenis, 'GEN')
-                seri_upper = seri.upper().replace(" ", "")
-                jaringan_suffix = 'G' if '5G' in seri_upper else 'L' if 'LTE' in seri_upper else 'N'
-                singkatan_seri = seri_upper.replace("5G", "").replace("LTE", "").replace("/", "")
-                singkatan_seri = singkatan_seri.replace("ULTRA", "U").replace("+", "P").replace("FOLD", "FD").replace("FLIP", "FP")
-                
-                sku = f"{kode_part}-{singkatan_seri}{jaringan_suffix}-{random.randint(1000, 9999)}-{i}"
-                imei = f"35{random.randint(1000000000000, 9999999999999)}" if jenis == 'Unit' else ""
-                
-                is_processed = random.random() < 0.80
-                status_proses = 'Selesai' if is_processed else 'Pending'
+            status_proses = 'Pending' if sk['tujuan'] in ['BOM', 'Grading'] else 'Selesai'
 
+            db.execute_query(
+                """INSERT INTO supplies 
+                   (no_order, tgl_masuk, supplier, status_bayar, jenis, brand, sku, imei, nama_barang, modal_awal, lokasi_toko, lokasi_rak, status_proses, foto) 
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                (no_order, tgl_masuk, supplier_terpilih, 'Lunas', sk['jenis'], brand, sku, 
+                 f"35{random.randint(1000000000000, 9999999999999)}" if sk['jenis'] == 'Unit' else "", 
+                 nama_barang, sk['harga'], "Gudang Pusat", f"Rak {sk['tujuan']}", status_proses, "")
+            )
+
+            # --- C. MASUKKAN KE STOK JIKA SUDAH SELESAI ---
+            if status_proses == 'Selesai':
+                id_stock = f"STK-{sku}"
+                qr = qrcode.make(id_stock)
+                qr_filename = f"{id_stock}.png"
+                qr.save(os.path.join('static', 'qr', qr_filename))
+                
+                tindakan = 'Perbaiki' if sk['tujuan'] == 'Repair' else 'Jual'
+                status_barang = 'Terjual' if sk['tujuan'] == 'Sales' else 'Tersedia'
+                grade = 'Grade C' if sk['tujuan'] == 'Repair' else 'Grade A'
+                
                 db.execute_query(
-                    """INSERT INTO supplies 
-                       (no_order, tgl_masuk, supplier, status_bayar, jenis, brand, sku, imei, nama_barang, modal_awal, lokasi_toko, lokasi_rak, status_proses, foto) 
+                    """INSERT INTO stocks 
+                       (id_stock, no_order, nama_barang, jenis, brand, grade, jenis_cacat, modal_awal, total_modal, lokasi_rak, tindakan, qr_code, foto, status_barang) 
                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-                    (no_order, tgl_masuk, supplier, status_bayar, jenis, brand, sku, imei, nama_barang, modal_awal, "Gudang Pusat", "Rak Transit", status_proses, "")
+                    (id_stock, no_order, nama_barang, sk['jenis'], brand, grade, 'Normal', sk['harga'], sk['harga'], f"Rak-{i}", tindakan, f"/static/qr/{qr_filename}", "", status_barang)
                 )
 
-                # --- C. FASE GUDANG AKTIF (STOCKS) ---
-                if is_processed:
-                    jenis_stok = jenis
-                    nama_stok = nama_barang
+                # --- D. BUAT DATA PENJUALAN ---
+                if sk['tujuan'] == 'Sales':
+                    tgl_jual = tgl_masuk + timedelta(days=2)
+                    no_invoice_jual = f"INV-OUT-500{i}"
+                    harga_jual = sk['harga'] + 50000 
                     
-                    if jenis_stok == 'Unit':
-                        jenis_stok = 'LCD'
-                        nama_stok = f"LCD {seri}"
-                    
-                    grade_pilihan = random.choice(['Grade A', 'Grade B', 'Grade C', 'Grade D', 'Bahan'])
-                    cacat_terpilih = random.choice(master_defects[grade_pilihan])
-                    
-                    id_stock = f"STK-{sku}"
-                    lokasi_rak = f"Rak {random.choice(['A', 'B', 'C'])}-{random.randint(1, 10)}"
-                    tindakan = random.choice(['Jual', 'Perbaiki'])
-                    
-                    qr = qrcode.make(id_stock)
-                    qr_filename = f"{id_stock}.png"
-                    qr.save(os.path.join('static', 'qr', qr_filename))
-                    qr_path_db = f"/static/qr/{qr_filename}"
-                    
-                    status_barang = 'Terjual' if random.random() < 0.2 else 'Tersedia'
-
                     db.execute_query(
-                        """INSERT INTO stocks 
-                           (id_stock, no_order, nama_barang, jenis, brand, grade, jenis_cacat, modal_awal, total_modal, lokasi_rak, tindakan, qr_code, foto, status_barang) 
-                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-                        (id_stock, no_order, nama_stok, jenis_stok, brand, grade_pilihan, cacat_terpilih, modal_awal, modal_awal, lokasi_rak, tindakan, qr_path_db, "", status_barang)
+                        """INSERT INTO sales (no_invoice, tgl_transaksi, nama_pembeli, no_order_marketplace, sumber_penjualan, total_item, total_bayar, metode_pembayaran)
+                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+                        (no_invoice_jual, tgl_jual, pembeli_list[i-1], '', 'Toko Offline', 1, harga_jual, 'Tunai')
+                    )
+                    
+                    # SOLUSI ERROR: Menggunakan fetch_all karena fetch_one tidak tersedia
+                    cek_id = db.fetch_all(f"SELECT id_sales FROM sales WHERE no_invoice = '{no_invoice_jual}'")
+                    id_sales = cek_id[0]['id_sales']
+                    
+                    db.execute_query(
+                        "INSERT INTO sales_items (id_sales, id_stock, harga_jual_aktual) VALUES (%s, %s, %s)",
+                        (id_sales, id_stock, harga_jual)
                     )
 
-    print("\n✅ SEEDING BERHASIL! Struktur tabel otomatis disesuaikan dan data tersimpan tanpa error!")
+    print("\n✅ SEEDING SELESAI!")
 
 if __name__ == "__main__":
     generate_seeder()
